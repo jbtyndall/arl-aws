@@ -464,7 +464,7 @@ Every change made to AWS for this project. AWS entries are in UTC. Entries follo
 [2026-11-23 15:51:39] [INFO]  Attempted to add an inline policy to an IAM role in ARL-ITS-Sandbox. Denied by SCP p-fk8c2yj2 (ARL-Guardrails-Global, ProtectRoles). RoleName=ARL-SES-Sender-Test PerformedBy=jh.jbt8@arl.psu.edu. No change was made, and the role does not exist
 ```
 
-The sandbox allow test. Times are when each step started. The role and its inline policy were created and deleted by the `OrganizationAccountAccessRole` session `ses-scp-test`, so CloudTrail shows those calls under that role. Today's role events were not yet in the CloudTrail lookup at 15:58 UTC and still need to be confirmed:
+The sandbox allow test. Times are when each step started. The role and its inline policy were created and deleted by the `OrganizationAccountAccessRole` session `ses-scp-test`, so CloudTrail shows those calls under that role. CloudTrail confirmed these events at 16:09 UTC (`CreateRole` 15:57:53 UTC, `PutRolePolicy` 15:57:55 UTC, `DeleteRolePolicy` 15:58:14 UTC, `DeleteRole` 15:58:16 UTC, all by session `ses-scp-test`). It also recorded the two failed attempts from 15:51 UTC under `jh.jbt8@arl.psu.edu` (`CreateRole` failed on a malformed trust policy, `PutRolePolicy` was denied by the SCP):
 
 ```
 [2026-11-23 15:57:45] [INFO]  Assumed a role in ARL-ITS-Sandbox from the management account. Role=OrganizationAccountAccessRole Session=ses-scp-test Duration=900s PerformedBy=jh.jbt8@arl.psu.edu
