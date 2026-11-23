@@ -284,7 +284,18 @@ aws sesv2 delete-email-identity-policy --email-identity aws.arl.psu.edu --policy
 
 ### 6.2 SCP
 
-Created in the management account as a separate policy, `ARL-Deny-SES-Send-Except-Approved`, so it is easy to find, explain, and roll back.
+Created 2026-11-23 15:45 UTC in the management account as a separate policy, `ARL-Deny-SES-Send-Except-Approved` (policy ID `p-iyjam8nn`), so it is easy to find, explain, and roll back. The file is `ses/scp-deny-ses-send-except-approved.json`, and an export of what AWS stores is in `scps/`.
+
+**Current attachment: `ARL-ITS-Sandbox` only.** It is not attached to Root or any other account. Rolling it out further is a separate step (Section 5, step 5).
+
+The condition uses `ArnNotLike` on `aws:PrincipalArn` with the GovCloud partition, matching the identity policy in Section 6.1. An earlier draft used `StringNotLike` on `aws:PrincipalARN` with `arn:*`.
+
+To attach to another account, then to remove it:
+
+```
+aws organizations attach-policy --policy-id p-iyjam8nn --target-id <account-id> --profile arlpsu-govcloud --region us-gov-west-1
+aws organizations detach-policy --policy-id p-iyjam8nn --target-id <account-id> --profile arlpsu-govcloud --region us-gov-west-1
+```
 
 ```json
 {
@@ -304,8 +315,8 @@ Created in the management account as a separate policy, `ARL-Deny-SES-Send-Excep
       ],
       "Resource": "*",
       "Condition": {
-        "StringNotLike": {
-          "aws:PrincipalARN": ["arn:*:iam::*:role/ARL-SES-Sender-*"]
+        "ArnNotLike": {
+          "aws:PrincipalArn": "arn:aws-us-gov:iam::*:role/ARL-SES-Sender-*"
         }
       }
     }
@@ -360,7 +371,7 @@ Cybersecurity asked for time-stamped proof of three items. Status is current as 
 | Layer | Status | Evidence to capture |
 |---|---|---|
 | Identity policy | **Applied** 2026-11-23 15:23 UTC, verified by read-back at 15:23:14 UTC | Re-capture `aws sesv2 get-email-identity --email-identity aws.arl.psu.edu` showing the policy, plus the console Authorization tab, with a fresh timestamp for Damian. The CloudTrail record of the change is not yet confirmed |
-| SCP | **Not done** | Organizations console view of the SCP and its targets, plus `list-targets-for-policy` |
+| SCP | **Created 2026-11-23 15:45 UTC, attached to `ARL-ITS-Sandbox` only.** Not yet enforced org-wide, and not yet tested | Organizations console view of the SCP and its targets, plus `list-targets-for-policy`. Re-capture after it is attached more widely |
 | IAM role policies | **Not done** | Policy JSON on each approved sender role |
 | Negative test | **Not done** | AccessDenied from a non-approved role, and success from an approved role, with timestamps |
 
@@ -421,6 +432,11 @@ Every change made to AWS for this project. AWS entries are in UTC. Entries follo
 ```
 [2026-11-23 15:21:54] [INFO]  Attempted to add a sending authorization policy to an SES identity. Failed before reaching AWS. Command=put-email-identity-policy does not exist in SESv2. No change was made
 [2026-11-23 15:23:12] [INFO]  Created a sending authorization policy on an SES identity. Identity=aws.arl.psu.edu Account=890884507059 Region=us-gov-west-1 PolicyName=AllowApprovedSenderRoles Changes=Policies: (none) -> AllowApprovedSenderRoles (Allow ses:SendEmail and ses:SendRawEmail for roles matching arn:aws-us-gov:iam::*:role/ARL-SES-Sender-* in org o-uwpj5760j5) PerformedBy=jh.jbt8@arl.psu.edu Role=AWSReservedSSO_AdministratorAccess
+```
+
+```
+[2026-11-23 15:45:35] [INFO]  Created a Service Control Policy in AWS Organizations. PolicyName=ARL-Deny-SES-Send-Except-Approved PolicyId=p-iyjam8nn Account=117021256943 (management) Changes=SCP: (none) -> ARL-Deny-SES-Send-Except-Approved (Deny ses:Send* actions unless the caller matches arn:aws-us-gov:iam::*:role/ARL-SES-Sender-*) PerformedBy=jh.jbt8@arl.psu.edu
+[2026-11-23 15:45:38] [INFO]  Attached a Service Control Policy. PolicyId=p-iyjam8nn Target=ARL-ITS-Sandbox (882729674333) Changes=Direct SCPs on target: FullAWSAccess -> FullAWSAccess, ARL-Deny-SES-Send-Except-Approved. Root and all other accounts unchanged PerformedBy=jh.jbt8@arl.psu.edu
 ```
 
 Local-only changes on the admin workstation (not AWS). These times are **local (Eastern)**, not UTC, and only the backup time is exact. The others are approximate, so no seconds are shown:

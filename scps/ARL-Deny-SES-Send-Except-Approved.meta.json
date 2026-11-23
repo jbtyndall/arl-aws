@@ -1,0 +1,6 @@
+{
+    "Id": "p-iyjam8nn",
+    "Name": "ARL-Deny-SES-Send-Except-Approved",
+    "Description": "Denies SES sending except from ARL-SES-Sender-* roles",
+    "AwsManaged": false
+}
