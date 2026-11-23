@@ -1,0 +1,107 @@
+[
+    {
+        "Name": "ARL-CMS-J9-RAG",
+        "Id": "699132915126",
+        "Type": "ACCOUNT"
+    },
+    {
+        "Name": "ARL-ITS-KionTEST",
+        "Id": "070823635396",
+        "Type": "ACCOUNT"
+    },
+    {
+        "Name": "ARL-GIDS-DCS",
+        "Id": "016270123306",
+        "Type": "ACCOUNT"
+    },
+    {
+        "Name": "ARL-CMS-CTA-Department",
+        "Id": "663663198261",
+        "Type": "ACCOUNT"
+    },
+    {
+        "Name": "ARL-ITS-Sandbox",
+        "Id": "882729674333",
+        "Type": "ACCOUNT"
+    },
+    {
+        "Name": "ARL-CINO-DE",
+        "Id": "072052661768",
+        "Type": "ACCOUNT"
+    },
+    {
+        "Name": "ARL-MMO-SEALChallenge",
+        "Id": "089301394009",
+        "Type": "ACCOUNT"
+    },
+    {
+        "Name": "ARL-ITS-cloudtamer",
+        "Id": "301228987260",
+        "Type": "ACCOUNT"
+    },
+    {
+        "Name": "ARL-MSA-AdvMDataInfra",
+        "Id": "494814783226",
+        "Type": "ACCOUNT"
+    },
+    {
+        "Name": "ARL-MMO-DataArchive",
+        "Id": "149737347476",
+        "Type": "ACCOUNT"
+    },
+    {
+        "Name": "ARL-AST-ModernShipcheck",
+        "Id": "592933692829",
+        "Type": "ACCOUNT"
+    },
+    {
+        "Name": "ARLPSU",
+        "Id": "117021256943",
+        "Type": "ACCOUNT"
+    },
+    {
+        "Name": "ARL-CINO-GDS",
+        "Id": "347829638531",
+        "Type": "ACCOUNT"
+    },
+    {
+        "Name": "ARLPSU-LogArchive",
+        "Id": "233818600262",
+        "Type": "ACCOUNT"
+    },
+    {
+        "Name": "GIDS-Nimbus",
+        "Id": "663684808208",
+        "Type": "ACCOUNT"
+    },
+    {
+        "Name": "ARL-GIDS-Basecamp",
+        "Id": "579938454423",
+        "Type": "ACCOUNT"
+    },
+    {
+        "Name": "ARL-ITS",
+        "Id": "890884507059",
+        "Type": "ACCOUNT"
+    },
+    {
+        "Name": "ARL-SIL-MVP",
+        "Id": "192047905441",
+        "Type": "ACCOUNT"
+    },
+    {
+        "Name": "ARL-CINO-Cloudfish",
+        "Id": "220766798508",
+        "Type": "ACCOUNT"
+    },
+    {
+        "Name": "ARL-MMSO-OEX-Communications",
+        "Id": "554608397257",
+        "Type": "ACCOUNT"
+    },
+    {
+        "Name": "Root",
+        "Id": "r-tgcj",
+        "Type": "ROOT"
+    }
+]

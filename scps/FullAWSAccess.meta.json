@@ -1,0 +1,6 @@
+{
+    "Id": "p-FullAWSAccess",
+    "Name": "FullAWSAccess",
+    "Description": "Allows access to every operation",
+    "AwsManaged": true
+}

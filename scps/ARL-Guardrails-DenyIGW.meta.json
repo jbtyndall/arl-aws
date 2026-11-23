@@ -1,0 +1,6 @@
+{
+    "Id": "p-gbh6pg8z",
+    "Name": "ARL-Guardrails-DenyIGW",
+    "Description": "Prevents new Internet Gateways or VPC peerings from being created or attached to VPCs",
+    "AwsManaged": false
+}

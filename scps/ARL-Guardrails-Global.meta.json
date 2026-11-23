@@ -1,0 +1,6 @@
+{
+    "Id": "p-fk8c2yj2",
+    "Name": "ARL-Guardrails-Global",
+    "Description": "Global policy for all ARL accounts",
+    "AwsManaged": false
+}

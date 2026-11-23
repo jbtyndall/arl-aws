@@ -1,0 +1,172 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ProtectLogging",
+      "Effect": "Deny",
+      "Action": [
+        "cloudtrail:StopLogging",
+        "ec2:DeleteFlowLogs",
+        "config:DeleteConfigRule",
+        "config:DeleteConfigurationRecorder",
+        "config:DeleteDeliveryChannel",
+        "config:PutConfigRule",
+        "config:PutConfigurationRecorder",
+        "config:PutDeliveryChannel",
+        "config:StopConfigurationRecorder",
+        "access-analyzer:DeleteAnalyzer",
+        "guardduty:DeleteDetector",
+        "guardduty:DeleteInvitations",
+        "guardduty:DeleteIPSet",
+        "guardduty:DeleteMembers",
+        "guardduty:DeleteThreatIntelSet",
+        "guardduty:DisassociateFromMasterAccount",
+        "guardduty:DisassociateMembers",
+        "guardduty:StopMonitoringMembers",
+        "guardduty:UpdateDetector"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotLike": {
+          "aws:PrincipalARN": [
+            "arn:*:iam::*:role/ARL-ITSCloudAdminRole",
+            "arn:*:iam::*:role/CT-GlobalAdmin",
+            "arn:*:iam::*:role/arl-compliance/*",
+            "arn:*:iam::*:role/cloudtamer-service-role",
+            "arn:*:iam::*:role/stacksets-exec-*"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ProtectCloudWatch",
+      "Effect": "Deny",
+      "Action": [
+        "cloudwatch:DeleteAlarms",
+        "cloudwatch:DeleteDashboards",
+        "cloudwatch:DisableAlarmActions",
+        "cloudwatch:PutDashboard",
+        "cloudwatch:PutMetricAlarm",
+        "cloudwatch:SetAlarmState",
+        "logs:DeleteLogGroup",
+        "logs:DeleteLogStream"
+      ],
+      "Resource": [
+        "arn:*:logs:*:*:log-group:ARL-Base-*",
+        "arn:*:logs:*:*:log-group:/arl/*",
+        "arn:*:logs:*:*:log-group:/aws/lambda/ARL-Compliance-*",
+        "arn:*:cloudwatch:*:*:alarm:ARL-Compliance-*",
+        "arn:*:cloudwatch:*:*:dashboard/ARL-Compliance-*"
+      ],
+      "Condition": {
+        "StringNotLike": {
+          "aws:PrincipalARN": [
+            "arn:*:iam::*:role/ARL-ITSCloudAdminRole",
+            "arn:*:iam::*:role/CT-GlobalAdmin",
+            "arn:*:iam::*:role/arl-compliance/*",
+            "arn:*:iam::*:role/cloudtamer-service-role",
+            "arn:*:iam::*:role/stacksets-exec-*"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ProtectRoles",
+      "Effect": "Deny",
+      "Action": [
+        "iam:AttachRolePolicy",
+        "iam:DeleteRole",
+        "iam:DeleteRolePermissionsBoundary",
+        "iam:DeleteRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:PutRolePermissionsBoundary",
+        "iam:PutRolePolicy",
+        "iam:UpdateAssumeRolePolicy",
+        "iam:UpdateRole",
+        "iam:UpdateRoleDescription"
+      ],
+      "Resource": [
+        "arn:*:iam::*:role/ARL-*",
+        "arn:*:iam::*:role/CT-*",
+        "arn:*:iam::*:role/arl-compliance/*",
+        "arn:*:iam::*:role/Okta-Idp-cross-account-role",
+        "arn:*:iam::*:role/cloudtamer-service-role",
+        "arn:*:iam::*:role/OrganizationAccountAccessRole"
+      ],
+      "Condition": {
+        "StringNotLike": {
+          "aws:PrincipalARN": [
+            "arn:*:iam::*:role/ARL-ITSCloudAdminRole",
+            "arn:*:iam::*:role/CT-GlobalAdmin",
+            "arn:*:iam::*:role/arl-compliance/*",
+            "arn:*:iam::*:role/cloudtamer-service-role",
+            "arn:*:iam::*:role/OrganizationAccountAccessRole",
+            "arn:*:iam::*:role/stacksets-exec-*"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ProtectAccountSettings",
+      "Effect": "Deny",
+      "Action": [
+        "account:DeleteAlternateContact",
+        "account:DisableRegion",
+        "account:EnableRegion",
+        "account:PutAlternateContact",
+        "aws-portal:Modify*",
+        "organizations:LeaveOrganization"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotLike": {
+          "aws:PrincipalARN": [
+            "arn:*:iam::*:role/ARL-ITSCloudAdminRole",
+            "arn:*:iam::*:role/CT-GlobalAdmin",
+            "arn:*:iam::*:role/cloudtamer-service-role",
+            "arn:*:iam::*:role/OrganizationAccountAccessRole",
+            "arn:*:iam::*:root"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ProtectDefaultSettings",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:DisableEbsEncryptionByDefault",
+        "iam:UpdateAccountPasswordPolicy",
+        "iam:DeleteAccountPasswordPolicy",
+        "s3:PutAccountPublicAccessBlock",
+        "s3:DeleteAccountPublicAccessBlock"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotLike": {
+          "aws:PrincipalARN": [
+            "arn:*:iam::*:role/ARL-ITSCloudAdminRole",
+            "arn:*:iam::*:role/CT-GlobalAdmin",
+            "arn:*:iam::*:role/cloudtamer-service-role",
+            "arn:*:iam::*:role/arl-compliance/*",
+            "arn:*:iam::*:stacksets-exec-*",
+            "arn:*:iam::*:role/stacksets-exec-*"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "DenyExternalResourceShares",
+      "Effect": "Deny",
+      "Action": [
+        "ram:CreateResourceShare",
+        "ram:UpdateResourceShare"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "Bool": {
+          "ram:RequestedAllowsExternalPrincipals": "true"
+        }
+      }
+    }
+  ]
+}
