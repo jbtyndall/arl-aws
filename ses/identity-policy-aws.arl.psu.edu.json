@@ -1,0 +1,16 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowApprovedSenderRoles",
+      "Effect": "Allow",
+      "Principal": { "AWS": "*" },
+      "Action": ["ses:SendEmail", "ses:SendRawEmail"],
+      "Resource": "arn:aws-us-gov:ses:us-gov-west-1:890884507059:identity/aws.arl.psu.edu",
+      "Condition": {
+        "StringEquals": { "aws:PrincipalOrgID": "o-uwpj5760j5" },
+        "ArnLike": { "aws:PrincipalArn": "arn:aws-us-gov:iam::*:role/ARL-SES-Sender-*" }
+      }
+    }
+  ]
+}

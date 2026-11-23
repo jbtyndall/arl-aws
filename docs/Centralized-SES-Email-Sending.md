@@ -183,7 +183,7 @@ Captured 2026-11-22 around 22:51 UTC (`arl-its-govcloud`) and 2026-11-23 around 
 | `ARL-Guardrails-Global` | Protects logging, monitoring, roles, account settings, and RAM sharing. **Contains no SES statements** |
 | Domain identity `aws.arl.psu.edu` | Exists. Verification `FAILED`, DKIM `FAILED`, MAIL FROM `FAILED`. Expected, since the DNS records do not exist yet |
 | DKIM tokens on the identity | Match the three CNAMEs in the DNS ticket, so the ticket can be fulfilled as submitted |
-| Identity sending policy | None (`Policies: {}`) |
+| Identity sending policy | None at first (`Policies: {}`). **Applied 2026-11-23 15:23 UTC**, see Section 10 |
 | SES account | Sandbox (production access not enabled). Quota 200 per 24 hours, 1 per second |
 | Other identities | `aws@arl.psu.edu` and `jbt8@arl.psu.edu` (verified, likely test leftovers) |
 | Configuration set | `my-first-configuration-set`, reputation metrics on, no event destinations found |
@@ -226,11 +226,11 @@ The person who built this left no documentation, so this was worked out from the
 
 ## 5. Implementation plan
 
-Nothing below has been applied yet. Each step is approved before it runs.
+Each step is approved before it runs. Completed steps are crossed out. Every change to AWS is logged in Section 10.
 
 1. ~~**Survey the other accounts** for existing SES use (Section 3).~~ Done 2026-11-23, no existing senders (Section 4.1).
 2. **DNS:** Cybersecurity creates the six records from the ticket. Confirm the identity moves to `SUCCESS` for verification, DKIM, and MAIL FROM.
-3. **Identity policy** on `aws.arl.psu.edu` (Section 6.1).
+3. ~~**Identity policy** on `aws.arl.psu.edu` (Section 6.1).~~ Done 2026-11-23 (Section 10).
 4. **Event destination** on the configuration set, sent to CloudWatch. Make it the identity's default configuration set. Add alarms on bounce and complaint rate.
 5. **SCP rollout** (Section 6.2):
    1. Create the policy as its own named SCP.
@@ -249,7 +249,19 @@ Nothing below has been applied yet. Each step is approved before it runs.
 
 ### 6.1 Identity sending authorization policy
 
-Applied to `aws.arl.psu.edu` in `ARL-ITS`. Replace `<ARL-ITS-account-id>` with the real account ID.
+Applied to `aws.arl.psu.edu` in `ARL-ITS` on 2026-11-23. The file is `ses/identity-policy-aws.arl.psu.edu.json` in this repo. The `Resource` below uses the real `ARL-ITS` account ID (890884507059).
+
+To apply it again (SESv2 uses `create-email-identity-policy` for a new policy and `update-email-identity-policy` to change an existing one):
+
+```
+aws sesv2 create-email-identity-policy --email-identity aws.arl.psu.edu --policy-name AllowApprovedSenderRoles --policy file://ses/identity-policy-aws.arl.psu.edu.json --profile arl-its-govcloud --region us-gov-west-1
+```
+
+To remove it:
+
+```
+aws sesv2 delete-email-identity-policy --email-identity aws.arl.psu.edu --policy-name AllowApprovedSenderRoles --profile arl-its-govcloud --region us-gov-west-1
+```
 
 ```json
 {
@@ -260,7 +272,7 @@ Applied to `aws.arl.psu.edu` in `ARL-ITS`. Replace `<ARL-ITS-account-id>` with t
       "Effect": "Allow",
       "Principal": { "AWS": "*" },
       "Action": ["ses:SendEmail", "ses:SendRawEmail"],
-      "Resource": "arn:aws-us-gov:ses:us-gov-west-1:<ARL-ITS-account-id>:identity/aws.arl.psu.edu",
+      "Resource": "arn:aws-us-gov:ses:us-gov-west-1:890884507059:identity/aws.arl.psu.edu",
       "Condition": {
         "StringEquals": { "aws:PrincipalOrgID": "o-uwpj5760j5" },
         "ArnLike": { "aws:PrincipalArn": "arn:aws-us-gov:iam::*:role/ARL-SES-Sender-*" }
@@ -347,7 +359,7 @@ Cybersecurity asked for time-stamped proof of three items. Status is current as 
 
 | Layer | Status | Evidence to capture |
 |---|---|---|
-| Identity policy | **Not done** | `aws sesv2 get-email-identity --email-identity aws.arl.psu.edu` showing the policy, plus the console Authorization tab |
+| Identity policy | **Applied** 2026-11-23 15:23 UTC, verified by read-back at 15:23:14 UTC | Re-capture `aws sesv2 get-email-identity --email-identity aws.arl.psu.edu` showing the policy, plus the console Authorization tab, with a fresh timestamp for Damian. The CloudTrail record of the change is not yet confirmed |
 | SCP | **Not done** | Organizations console view of the SCP and its targets, plus `list-targets-for-policy` |
 | IAM role policies | **Not done** | Policy JSON on each approved sender role |
 | Negative test | **Not done** | AccessDenied from a non-approved role, and success from an approved role, with timestamps |
@@ -399,3 +411,24 @@ For each capture, include a timestamp. In PowerShell run `Get-Date -Format o` be
 11. **Confirm what `ARL-Baseline` deploys** in Kion, and whether it relates to `ARL-Guardrails-Global` (Section 4.2).
 12. **Decide where SCP changes are tracked.** SCPs live only in AWS Organizations. Keep the exports in `scps/` current whenever one changes.
 13. **Expired `ARL Root CA` certificate** (expired 2023-11-11) is still in the Windows root store on the admin workstation. Tell the team that manages workstation certificates.
+
+---
+
+## 10. Change log
+
+Every change made to AWS for this project. AWS entries are in UTC. Entries follow the log format used in our applications.
+
+```
+[2026-11-23 15:21:54] [INFO]  Attempted to add a sending authorization policy to an SES identity. Failed before reaching AWS. Command=put-email-identity-policy does not exist in SESv2. No change was made
+[2026-11-23 15:23:12] [INFO]  Created a sending authorization policy on an SES identity. Identity=aws.arl.psu.edu Account=890884507059 Region=us-gov-west-1 PolicyName=AllowApprovedSenderRoles Changes=Policies: (none) -> AllowApprovedSenderRoles (Allow ses:SendEmail and ses:SendRawEmail for roles matching arn:aws-us-gov:iam::*:role/ARL-SES-Sender-* in org o-uwpj5760j5) PerformedBy=jh.jbt8@arl.psu.edu Role=AWSReservedSSO_AdministratorAccess
+```
+
+Local-only changes on the admin workstation (not AWS). These times are **local (Eastern)**, not UTC, and only the backup time is exact. The others are approximate, so no seconds are shown:
+
+```
+[2026-11-23 08:51] [INFO]  Backed up the AWS CLI config. Path=C:\Users\jbt8\.aws\config.bak-20261123-085107
+[2026-11-23 08:51] [INFO]  Updated the AWS CLI config. Changes=3 profiles (arl-its-sandbox-govcloud, gids-nimbus-govcloud, arl-its-govcloud) sso_session -> arlpsu-govcloud; added 16 profiles named <account-name>-govcloud
+[2026-11-23 09:40] [INFO]  Created the combined CA bundle and set the user environment variable AWS_CA_BUNDLE. Path=C:\Users\jbt8\.aws\ca-bundle.pem Changes=AWS_CA_BUNDLE: (unset) -> C:\Users\jbt8\.aws\ca-bundle.pem
+```
+
+Treat the AWS entries as the authoritative record.
