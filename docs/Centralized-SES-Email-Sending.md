@@ -335,7 +335,9 @@ Caveats:
 
 `ARL-SES-Sender-<purpose>`, for example `ARL-SES-Sender-Alerts`. The `ARL-` prefix also puts the role under the existing `ProtectRoles` SCP.
 
-**Untested, and it affects onboarding:** `ProtectRoles` denies `iam:AttachRolePolicy`, `PutRolePolicy`, `DeleteRole`, and similar actions on `ARL-*` roles, with exemptions for `ARL-ITSCloudAdminRole`, `CT-GlobalAdmin`, `cloudtamer-service-role`, `OrganizationAccountAccessRole`, `arl-compliance/*`, and `stacksets-exec-*`. The `AWSReservedSSO_AdministratorAccess_*` role is not on the list, so creating or editing a sender role as an SSO admin will probably be denied. `ARL-ITS` is the delegated StackSets administrator, so the likely onboarding path is a service-managed StackSet that creates the role in each account. Test both in `ARL-ITS-Sandbox` before promising researchers a process.
+**Confirmed 2026-11-23 15:51 UTC:** `iam:PutRolePolicy` on `ARL-SES-Sender-Test` as the SSO `AdministratorAccess` role in `ARL-ITS-Sandbox` was denied: "explicit deny in a service control policy ... p-fk8c2yj2" (`ARL-Guardrails-Global`, the `ProtectRoles` statement). The role did not exist, so the match is on the `ARL-*` name alone. `CreateRole` is not in the denied action list, so an SSO admin can probably create an `ARL-*` role but cannot attach permissions to it, update its trust policy, or delete it (not tested). Creating one that way would leave an orphan role that only an exempt role can clean up. Do not do that.
+
+**Originally untested, and it affects onboarding:** `ProtectRoles` denies `iam:AttachRolePolicy`, `PutRolePolicy`, `DeleteRole`, and similar actions on `ARL-*` roles, with exemptions for `ARL-ITSCloudAdminRole`, `CT-GlobalAdmin`, `cloudtamer-service-role`, `OrganizationAccountAccessRole`, `arl-compliance/*`, and `stacksets-exec-*`. The `AWSReservedSSO_AdministratorAccess_*` role is not on the list, so creating or editing a sender role as an SSO admin will probably be denied. `ARL-ITS` is the delegated StackSets administrator, so the likely onboarding path is a service-managed StackSet that creates the role in each account. Test both in `ARL-ITS-Sandbox` before promising researchers a process.
 
 ### 6.4 DNS records (from the ticket)
 
@@ -370,10 +372,28 @@ Cybersecurity asked for time-stamped proof of three items. Status is current as 
 
 | Layer | Status | Evidence to capture |
 |---|---|---|
-| Identity policy | **Applied** 2026-11-23 15:23 UTC, verified by read-back at 15:23:14 UTC | Re-capture `aws sesv2 get-email-identity --email-identity aws.arl.psu.edu` showing the policy, plus the console Authorization tab, with a fresh timestamp for Damian. The CloudTrail record of the change is not yet confirmed |
-| SCP | **Created 2026-11-23 15:45 UTC, attached to `ARL-ITS-Sandbox` only.** Not yet enforced org-wide, and not yet tested | Organizations console view of the SCP and its targets, plus `list-targets-for-policy`. Re-capture after it is attached more widely |
+| Identity policy | **Applied** 2026-11-23 15:23 UTC, verified by read-back at 15:23:14 UTC | Re-capture `aws sesv2 get-email-identity --email-identity aws.arl.psu.edu` showing the policy, plus the console Authorization tab, with a fresh timestamp for Damian. CloudTrail recorded `CreateEmailIdentityPolicy` by `jh.jbt8@arl.psu.edu` at 2026-11-23 15:23:14 UTC |
+| SCP | **Created 2026-11-23 15:45 UTC, attached to `ARL-ITS-Sandbox` only.** Not yet enforced org-wide. CloudTrail recorded `CreatePolicy` (15:45:37 UTC) and `AttachPolicy` (15:45:39 UTC) by `jh.jbt8@arl.psu.edu`. Deny test passed (see Negative test) | Organizations console view of the SCP and its targets, plus `list-targets-for-policy`. Re-capture after it is attached more widely |
 | IAM role policies | **Not done** | Policy JSON on each approved sender role |
-| Negative test | **Not done** | AccessDenied from a non-approved role, and success from an approved role, with timestamps |
+| Negative and positive test | **Done in the sandbox** 2026-11-23 15:49 and 15:58 UTC. **Cross-account path not tested** | See the results below. The cross-account send through the `ARL-ITS` identity cannot be tested until the domain is verified |
+
+Deny test result (2026-11-23 15:49 UTC), `sesv2 send-email` as the SSO `AdministratorAccess` role:
+
+| Account | SCP attached | Result |
+|---|---|---|
+| `ARL-ITS-Sandbox` | Yes | `AccessDeniedException`: not authorized to perform `ses:SendEmail` |
+| `GIDS-Nimbus` (control) | No | `MessageRejected`: email address is not verified |
+
+Allow test result (2026-11-23 15:58 UTC), same account (`ARL-ITS-Sandbox`), same call, a role named `ARL-SES-Sender-Test` that was created for the test and deleted afterward:
+
+| Principal in `ARL-ITS-Sandbox` | Result |
+|---|---|
+| SSO `AdministratorAccess` role (does not match the pattern) | `AccessDeniedException`: not authorized to perform `ses:SendEmail` |
+| `ARL-SES-Sender-Test` (matches the pattern) | `MessageRejected`: email address is not verified |
+
+Both calls ran in the same account under the same SCP, and only the principal's name differed. The administrator role has full permissions, so the denial can only come from a guardrail that checks the role name, and the matching role passed it. The denial message does not name the SCP, so this is strong evidence rather than a direct statement from AWS. Detaching the SCP and repeating the call would make it conclusive.
+
+What this test did **not** cover: the send used the sandbox account's own (nonexistent) identity, not the `ARL-ITS` identity. So it shows the SCP pattern lets an approved role through. It does not show that a role in another account can send through `aws.arl.psu.edu` using the identity policy. That needs the domain verified (DNS ticket) and a send with `FromEmailAddressIdentityArn` set.
 
 ### 8.2 SES is outbound only
 
@@ -418,7 +438,7 @@ For each capture, include a timestamp. In PowerShell run `Get-Date -Format o` be
 7. **Management account exclusion:** SCPs do not cover it, so confirm nobody sends from there.
 8. **Org trail:** confirm central CloudTrail coverage for all member accounts.
 9. **Verify two SES documentation claims** (CloudTrail and `SendEmail`, GovCloud inbound limits) before telling Cybersecurity.
-10. **Sender role onboarding path.** Test whether `ProtectRoles` blocks creating `ARL-SES-Sender-*` roles as an SSO admin, and whether a StackSet from `ARL-ITS` works (Section 6.3).
+10. **Sender role onboarding path.** Confirmed that `ProtectRoles` blocks an SSO admin from attaching permissions to `ARL-SES-Sender-*` roles (Section 6.3). Creating the role through `OrganizationAccountAccessRole` worked (2026-11-23 15:57 UTC) and the allow test passed. `CT-GlobalAdmin` trusts only Kion's instance role in `ARL-ITS-cloudtamer` (with an external ID), so it is not usable by hand. `ARL-ITSCloudAdminRole` does not exist in the sandbox, so that exemption does nothing there. Still to test: onboarding through a StackSet from `ARL-ITS`, which is the process researchers would actually use.
 11. **Confirm what `ARL-Baseline` deploys** in Kion, and whether it relates to `ARL-Guardrails-Global` (Section 4.2).
 12. **Decide where SCP changes are tracked.** SCPs live only in AWS Organizations. Keep the exports in `scps/` current whenever one changes.
 13. **Expired `ARL Root CA` certificate** (expired 2023-11-11) is still in the Windows root store on the admin workstation. Tell the team that manages workstation certificates.
@@ -437,6 +457,19 @@ Every change made to AWS for this project. AWS entries are in UTC. Entries follo
 ```
 [2026-11-23 15:45:35] [INFO]  Created a Service Control Policy in AWS Organizations. PolicyName=ARL-Deny-SES-Send-Except-Approved PolicyId=p-iyjam8nn Account=117021256943 (management) Changes=SCP: (none) -> ARL-Deny-SES-Send-Except-Approved (Deny ses:Send* actions unless the caller matches arn:aws-us-gov:iam::*:role/ARL-SES-Sender-*) PerformedBy=jh.jbt8@arl.psu.edu
 [2026-11-23 15:45:38] [INFO]  Attached a Service Control Policy. PolicyId=p-iyjam8nn Target=ARL-ITS-Sandbox (882729674333) Changes=Direct SCPs on target: FullAWSAccess -> FullAWSAccess, ARL-Deny-SES-Send-Except-Approved. Root and all other accounts unchanged PerformedBy=jh.jbt8@arl.psu.edu
+```
+
+```
+[2026-11-23 15:51:37] [INFO]  Attempted to create an IAM role in ARL-ITS-Sandbox. Failed before any change: the trust policy had an empty principal (script bug). RoleName=ARL-SES-Sender-Test. No change was made
+[2026-11-23 15:51:39] [INFO]  Attempted to add an inline policy to an IAM role in ARL-ITS-Sandbox. Denied by SCP p-fk8c2yj2 (ARL-Guardrails-Global, ProtectRoles). RoleName=ARL-SES-Sender-Test PerformedBy=jh.jbt8@arl.psu.edu. No change was made, and the role does not exist
+```
+
+The sandbox allow test. Times are when each step started. The role and its inline policy were created and deleted by the `OrganizationAccountAccessRole` session `ses-scp-test`, so CloudTrail shows those calls under that role. Today's role events were not yet in the CloudTrail lookup at 15:58 UTC and still need to be confirmed:
+
+```
+[2026-11-23 15:57:45] [INFO]  Assumed a role in ARL-ITS-Sandbox from the management account. Role=OrganizationAccountAccessRole Session=ses-scp-test Duration=900s PerformedBy=jh.jbt8@arl.psu.edu
+[2026-11-23 15:57:51] [INFO]  Created an IAM role and inline policy in ARL-ITS-Sandbox. RoleName=ARL-SES-Sender-Test PolicyName=AllowSesSend Changes=Role: (none) -> ARL-SES-Sender-Test (trusts the SSO AdministratorAccess role; allows ses:SendEmail and ses:SendRawEmail) PerformedBy=OrganizationAccountAccessRole
+[2026-11-23 15:58:12] [INFO]  Deleted an IAM role and inline policy in ARL-ITS-Sandbox. RoleName=ARL-SES-Sender-Test PolicyName=AllowSesSend Changes=Role: ARL-SES-Sender-Test -> (none) PerformedBy=OrganizationAccountAccessRole. Confirmed gone at 15:58:26
 ```
 
 Local-only changes on the admin workstation (not AWS). These times are **local (Eastern)**, not UTC, and only the backup time is exact. The others are approximate, so no seconds are shown:
