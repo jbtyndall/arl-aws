@@ -442,6 +442,8 @@ For each capture, include a timestamp. In PowerShell run `Get-Date -Format o` be
 11. **Confirm what `ARL-Baseline` deploys** in Kion, and whether it relates to `ARL-Guardrails-Global` (Section 4.2).
 12. **Decide where SCP changes are tracked.** SCPs live only in AWS Organizations. Keep the exports in `scps/` current whenever one changes.
 13. **Expired `ARL Root CA` certificate** (expired 2023-11-11) is still in the Windows root store on the admin workstation. Tell the team that manages workstation certificates.
+14. **`ARL-ITS` can read the org's SCPs, and I do not know why.** On 2026-11-23 16:35 UTC, `describe-policy` and `list-targets-for-policy` on `p-iyjam8nn` succeeded from the `arl-its-govcloud` profile, and the console showed the SCP page with Edit, Delete, and Attach buttons. The delegated services listed for `ARL-ITS` do not include Organizations, and `describe-resource-policy` from the management account found no delegation policy. Not tested whether `ARL-ITS` can change SCPs, and it should not be tested by changing one. Find out before Cybersecurity asks who can edit the guardrails.
+15. **CloudTrail log files are not KMS-encrypted** (trail details page shows SSE-KMS "Not enabled"), in addition to the trail being account-level (item 8). Both are visible in `evidence/2026-11-23/06-cloudtrail-trail-details.png`.
 
 ---
 

@@ -52,15 +52,13 @@ John
 
 ---
 
-## Screenshots to take yourself (with the date and time visible)
+## Evidence files
 
-Run `Get-Date -Format o` in PowerShell first and keep it in the frame.
+The six console screenshots are in `evidence/2026-11-23/`, with an index (`README.md`) that lists when each was captured, what it shows, and the full text of both policies read back from AWS. Attach the six PNGs and paste or attach the index.
 
-1. SES console, `aws.arl.psu.edu` identity, Authorization tab (the identity policy).
-2. Organizations console, policy `ARL-Deny-SES-Send-Except-Approved`, with its Targets tab.
-3. CloudTrail console, event history filtered to Event source `ses.amazonaws.com`, showing `CreateEmailIdentityPolicy`.
-4. CloudTrail console, Trails page showing `arl-compliance-BaselineCloudTrail` logging.
-5. Terminal output of the two sandbox send tests (I have them in this session).
+`07-sandbox-send-tests.md` is a text record of the sandbox tests (deny at 15:49 UTC, control, allow at 15:58 UTC), with the commands, the output as captured, and the CloudTrail events. Attach it with the screenshots.
+
+Nothing here covers item 2 (outbound only). That one is explained in the reply text.
 
 ## Before you send
 
