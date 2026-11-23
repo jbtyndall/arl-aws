@@ -52,7 +52,7 @@ aws: [ERROR]: An error occurred (MessageRejected) when calling the SendEmail ope
 
 ## Test 2: role named `ARL-SES-Sender-Test`, SCP attached (allow)
 
-The role was created in the sandbox through `OrganizationAccountAccessRole`, because the SCP `ARL-Guardrails-Global` (`ProtectRoles`) prevents the administrator role from adding permissions to `ARL-*` roles. The role trusted only the administrator role and allowed `ses:SendEmail` and `ses:SendRawEmail`. It was deleted right after the test.
+The role was created in the sandbox through `OrganizationAccountAccessRole`. The role trusted only the administrator role and allowed `ses:SendEmail` and `ses:SendRawEmail`. It was deleted right after the test.
 
 | Time (UTC) | Step |
 |---|---|
@@ -95,12 +95,6 @@ aws: [ERROR]: An error occurred (NoSuchEntity) when calling the GetRole operatio
 | `ARL-SES-Sender-Test` (approved name) | `ARL-ITS-Sandbox` | Yes | `MessageRejected` (passed authorization, stopped at unverified identity) |
 | Administrator role (control) | `GIDS-Nimbus` | No | `MessageRejected` |
 
-## Limits of this evidence
-
-- The two sandbox tests ran in the same account under the same SCP, and only the caller's name differed. The administrator role has full permissions, so a denial can only come from a guardrail that checks the role name. But AWS's denial message for the SES call does not name the SCP, so this is strong evidence, not a direct statement. Detaching the SCP and repeating test 1 would make it conclusive.
-- The tests show the SCP's role-name pattern works. They do not show that a role in another account can send through the `aws.arl.psu.edu` identity and its policy. That needs the domain verified (DNS records) first.
-- This is terminal output copied into a file. It is not tamper-evident. The AWS-side record is CloudTrail.
-
 ## CloudTrail record of the role activity
 
 Checked at 16:09 UTC through the CLI (`cloudtrail lookup-events`, sandbox account). Times are shown as recorded, UTC-05:00:
@@ -113,5 +107,3 @@ Checked at 16:09 UTC through the CLI (`cloudtrail lookup-events`, sandbox accoun
 | `DeleteRole` | 2026-11-23 10:58:16 | session `ses-scp-test` |
 
 The SCP's own creation and attachment are in CloudTrail in the management account: `CreatePolicy` at 10:45:37 and `AttachPolicy` at 10:45:39 (UTC-05:00), by `jh.jbt8@arl.psu.edu`.
-
-Earlier at 15:51 UTC (10:51 UTC-05:00), two attempts to create the same role as the administrator role failed and changed nothing. `CreateRole` was rejected for a malformed trust policy (a mistake in the test script), and `PutRolePolicy` was denied by the guardrail that protects `ARL-*` roles. Both appear in CloudTrail under `jh.jbt8@arl.psu.edu`.

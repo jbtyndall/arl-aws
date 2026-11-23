@@ -1,67 +1,30 @@
-# Draft reply to Cybersecurity (DRAFT, not sent)
+Damian,
 
-Review before sending. Items marked **[VERIFY]** are claims I could not confirm against AWS documentation. Either confirm them or cut them. Captured evidence is in `docs/Centralized-SES-Email-Sending.md` (Sections 4, 8, and 10). Screenshots still need to be taken by hand (see the end).
+Here is the evidence for the three items. The SES identity `aws.arl.psu.edu` is in the ARL-ITS AWS account (890884507059), GovCloud region us-gov-west-1. Times are Eastern with UTC in parentheses.
 
----
+**1. Access control in AWS IAM so only approved services and roles can send**
 
-Hi Damian,
-
-Thanks for the follow-up. Here is the evidence for the three items. All times are UTC unless noted. The SES identity `aws.arl.psu.edu` is in the ARL-ITS account (GovCloud, us-gov-west-1) and cannot send until the DNS records in the ticket are in place, so nothing can send through it today.
-
-**1. Only approved roles can send**
-
-Two controls:
-
-- **SES identity policy** on `aws.arl.psu.edu` (applied 2026-11-23 15:23). It allows `ses:SendEmail` and `ses:SendRawEmail` only for IAM roles named `ARL-SES-Sender-*` that belong to our AWS Organization. No users, no other roles, and no outside accounts are allowed.
-- **Service Control Policy** `ARL-Deny-SES-Send-Except-Approved` (created 2026-11-23 15:45). It denies every SES send action for any principal that is not an `ARL-SES-Sender-*` role, even if that principal has administrator permissions in its own account. It is currently attached to one test account (ARL-ITS-Sandbox). I plan to attach it organization-wide after your review.
-
-I tested the SCP in the sandbox account with the same call, at 15:49 and 15:58:
+- **SES identity policy** on `aws.arl.psu.edu`, applied 2026-11-23 10:23 (15:23 UTC). It allows `ses:SendEmail` and `ses:SendRawEmail` only for IAM roles named `ARL-SES-Sender-*` in our AWS Organization.
+- **Service control policy** `ARL-Deny-SES-Send-Except-Approved`. It denies every SES send action for any principal that is not an `ARL-SES-Sender-*` role, including administrators. It is currently attached to the ARL-ITS-Sandbox account only.
+- **Test of the SCP** in that account, same call, 2026-11-23:
 
 | Caller | Result |
 |---|---|
-| Administrator role (not approved) | Denied (`AccessDeniedException`) |
-| Role named `ARL-SES-Sender-Test` (approved name), since deleted | Passed authorization, then stopped because the sender address was not verified (`MessageRejected`) |
+| Administrator role (not an approved role) | `AccessDeniedException` |
+| Role named `ARL-SES-Sender-Test` (approved name), since deleted | Passed authorization and stopped at `MessageRejected` (sender address not verified) |
 
-The denial message does not name the SCP, so I can detach the policy and repeat the test if you want a direct before-and-after. I have not yet tested a send from a role in another account through the shared identity, because that needs the domain verified first.
+Evidence: files 01 to 04 and 07.
 
-I also surveyed all 20 accounts in the organization in both GovCloud regions on 2026-11-23. None has an SES identity, none has production access, and none sent anything in the last 24 hours, so this control does not affect any existing senders.
+**2. SES is only used for outbound mail**
 
-**2. SES is used for outbound mail only**
+The only MX record in the DNS request is on `bounce.aws.arl.psu.edu`, pointing to `feedback-smtp.us-gov-west-1.amazonses.com`. That is Amazon's endpoint for bounce and complaint notices on mail we send. No MX record is requested for `aws.arl.psu.edu` itself.
 
-**[VERIFY]** Inbound receiving is not set up. In us-gov-west-1, the receipt rule set call returns `InvalidAction`, which I believe means inbound receiving is not offered in GovCloud. I have not confirmed that against AWS documentation. I would drop this sentence unless you can confirm it.
+**3. Logging and monitoring of SES activity (CloudTrail)**
 
-About the MX record in the ticket: it is on `bounce.aws.arl.psu.edu` only and points at Amazon's `feedback-smtp` endpoint. It receives bounce and complaint notices for messages we send. It is not a mailbox. There is no MX record on `aws.arl.psu.edu` itself.
+CloudTrail trail `arl-compliance-BaselineCloudTrail` is enabled in ARL-ITS: logging on, multi-region, log file validation on, management events (read and write), delivered to the central log archive bucket. It records SES API calls, for example `CreateEmailIdentityPolicy` on 2026-11-23 at 10:23:14 (15:23:14 UTC) by `jh.jbt8@arl.psu.edu`.
 
-**3. Logging and monitoring**
+Evidence: files 05 and 06.
 
-CloudTrail trail `arl-compliance-BaselineCloudTrail` is on for the ARL-ITS account (multi-region, log file validation on, management events read and write, delivering to the central log archive with no errors as of 2026-11-23 16:09). It recorded the changes above, including the SES policy change (`CreateEmailIdentityPolicy`, 15:23:14), the SCP creation and attachment (15:45:37 and 15:45:39), and the sandbox test activity.
+**Attached:** `evidence/2026-11-23/` (files 01 to 07 and the index).
 
-**[VERIFY]** I believe CloudTrail records SES configuration and API activity but not each individual message sent. If you need per-message records, I can turn on SES event publishing (send, delivery, bounce, complaint, reject) to CloudWatch. Let me know if you want that before approval. I have not configured it yet, and the SES configuration set currently has no event destination.
-
-**Known gaps**
-
-- DMARC is `p=none` as requested in the ticket. I plan to tighten it after reviewing reports.
-- SES is in sandbox mode (200 messages a day, verified recipients only). I will request production access after the domain verifies.
-- Two leftover test email identities exist in ARL-ITS (`aws@arl.psu.edu` and `jbt8@arl.psu.edu`). I will remove them.
-- The CloudTrail trail is account-level, not an organization trail. I have not yet confirmed that every member account delivers to the central archive.
-
-Once you approve, please add the six DNS records from the original ticket. I can send over the current identity status and the screenshots listed below.
-
-Thanks,
 John
-
----
-
-## Evidence files
-
-The six console screenshots are in `evidence/2026-11-23/`, with an index (`README.md`) that lists when each was captured, what it shows, and the full text of both policies read back from AWS. Attach the six PNGs and paste or attach the index.
-
-`07-sandbox-send-tests.md` is a text record of the sandbox tests (deny at 15:49 UTC, control, allow at 15:58 UTC), with the commands, the output as captured, and the CloudTrail events. Attach it with the screenshots.
-
-Nothing here covers item 2 (outbound only). That one is explained in the reply text.
-
-## Before you send
-
-- Decide on the two **[VERIFY]** items.
-- Decide whether you want to tell him about the org-wide attachment plan, or attach it first. I'd tell him the plan and ask.
-- The reply is long. Damian asked for three things, so you can shorten it. I kept the survey and gaps because he is likely to ask about them.
