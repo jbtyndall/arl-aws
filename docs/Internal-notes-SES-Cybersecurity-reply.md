@@ -26,7 +26,7 @@ Companion to `Reply-to-Cybersecurity-SES.md`. The reply answers Damian's three q
 - **"Does this stop someone with admin from sending?"** The SCP is written to, and the sandbox test shows an administrator role denied. The denial message does not name the SCP, so it is strong evidence, not proof. Detaching the SCP from the sandbox and repeating the call (expect `MessageRejected`) would make it conclusive. It is a quick write and I would re-attach immediately.
 - **"Has a role in another account actually sent through the shared identity?"** No. The domain is not verified until the DNS records exist, so that path is untested.
 - **"Who can change the SCP?"** Not fully known. `ARL-ITS` can read the org's SCPs and the console showed Edit, Delete, and Attach buttons, but Organizations is not in `ARL-ITS`'s delegated services and no delegation policy was found. Design doc, open item 14. Settle this before sending if you can.
-- **"Does the trail cover the other 19 accounts, and is it encrypted?"** The trail is account-level, not an organization trail (screenshot 06 shows "Apply trail to my organization: Not enabled"), and log file SSE-KMS is "Not enabled" (also in 06). Whether member accounts deliver to the central bucket is unconfirmed. Design doc, open items 8 and 15.
+- **"Does the trail cover the other 19 accounts, and is it encrypted?"** The trail is account-level, not an organization trail (screenshot 08 shows "Apply trail to my organization: Not enabled"), and log file SSE-KMS is "Not enabled" (also in 08). Whether member accounts deliver to the central bucket is unconfirmed. Design doc, open items 8 and 15.
 - **"Why does the identity show Error?"** The DNS records are not in place, which is what the ticket is for.
 - **"What were the failed attempts at 10:51 ET in CloudTrail under your name?"** My first role-creation script had a malformed trust policy (`CreateRole` failed, nothing changed), and `PutRolePolicy` was denied by `ARL-Guardrails-Global` (`ProtectRoles`). Both changed nothing. I deleted my test role afterward, and the role activity ran through `OrganizationAccountAccessRole` (session `ses-scp-test`).
 
@@ -34,8 +34,8 @@ Companion to `Reply-to-Cybersecurity-SES.md`. The reply answers Damian's three q
 
 - Screenshot 04 shows the SCP attached to one account.
 - Screenshots 01 and 02 show the identity status as Error.
-- Screenshot 02 is cut off on the right edge. The evidence index has the full text of both policies.
-- Screenshot 06 shows the trail is account-level and not KMS-encrypted.
+- Screenshot 02 is cut off on the right edge. Files 05 and 06 are the full policy text.
+- Screenshot 08 shows the trail is account-level and not KMS-encrypted.
 - Screenshots 03 and 04 are viewed from the `arl-its` account, not the management account (see open item 14).
 
 None of that is hidden. It is in the images you are attaching. It is just not commentary in the reply.
