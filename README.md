@@ -1,6 +1,6 @@
 # arl-aws
 
-Documentation, exports, and tools for ARL's AWS GovCloud organization. This repo exists because the original builder of the environment left without documenting it. Anything learned about how the org works goes here.
+Documentation, exports, and tools for ARL's AWS GovCloud organization and its commercial master payer account (arlpsu, 193147501194). This repo exists because the original builder of the environment left without documenting it. Anything learned about how the org works goes here.
 
 Keep this repo private. The SCP export files contain AWS account IDs.
 
@@ -8,7 +8,7 @@ Keep this repo private. The SCP export files contain AWS account IDs.
 
 | Folder | What is in it |
 |---|---|
-| `docs/` | Design docs and findings. Start with `Centralized-SES-Email-Sending.md` |
+| `docs/` | Design docs and findings. Start with `Centralized-SES-Email-Sending.md` for GovCloud or `Commercial-Payer-Account-and-IDC.md` for the commercial payer account |
 | `scps/` | Exports of the org's Service Control Policies: policy JSON, metadata, and attachment targets |
 | `tools/aws-cli-tls-fix/` | Fixes AWS CLI `CERTIFICATE_VERIFY_FAILED` errors caused by ARL TLS inspection. Has its own README |
 
@@ -47,6 +47,16 @@ aws sts get-caller-identity --profile arlpsu-govcloud
 
 If every call fails with `CERTIFICATE_VERIFY_FAILED`, see `tools/aws-cli-tls-fix/`.
 
+### Commercial accounts
+
+Commercial accounts use a separate portal and a separate login. All commercial profiles share the `arlpsu-commercial` SSO session:
+
+```
+aws sso login --sso-session arlpsu-commercial
+```
+
+Commercial profiles are named `<account-name>-commercial`, for example `arlpsu-commercial` (master payer) and `arl-its-commercial`. See `docs/Commercial-Payer-Account-and-IDC.md` for the account list, IAM Identity Center details, and the CFO billing and Marketplace access work.
+
 ## Service Control Policies
 
 SCPs are created and edited in the AWS Organizations console (management account), not in Kion. The files in `scps/` are point-in-time exports. Nothing deploys from them.
@@ -79,4 +89,5 @@ Current exports (2026-11-23):
 
 ## Open work
 
-Tracked in `docs/Centralized-SES-Email-Sending.md`, Section 9.
+- GovCloud SES: tracked in `docs/Centralized-SES-Email-Sending.md`, Section 9.
+- Commercial CFO billing and Marketplace access: tracked in `docs/Commercial-Payer-Account-and-IDC.md`, Section 4.4.

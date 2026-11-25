@@ -1,52 +1,34 @@
-# arl-aws: Project Context
+# arl-aws: Working Rules
 
-## Accounts
+This file holds rules only. Facts about accounts, profiles, IAM Identity Center, and in-progress work live in `docs/Commercial-Payer-Account-and-IDC.md` (commercial) and `README.md` (GovCloud). Read the relevant one before running AWS commands.
 
-| Name | Account ID | Partition | Role |
-|---|---|---|---|
-| arlpsu | 193147501194 | Commercial | Organizations management account and master payer. Owns the IAM Identity Center (IDC) instance. Root email: aws+arlpsu@arl.psu.edu |
-| arlpsu-govcloud | 117021256943 | GovCloud | Linked GovCloud account of arlpsu. Separate partition and separate IDC. |
-| arl-its | 808000717462 | Commercial | Delegated administrator for the org (sso, guardduty, securityhub, fms, access-analyzer, servicecatalog, StackSets). |
+## Who and what
 
-- AWS Marketplace exists only in the commercial partition. GovCloud bills through the paired commercial account.
-- The user (John Tyndall) is the Cloud Architect for ARL at Penn State. Do not suggest he "just do it himself" when he says someone else (e.g., the CFO) must perform an action.
+- John Tyndall is the Cloud Architect for ARL at Penn State. He knows the environment. Do not explain AWS basics to him.
+- When John says a specific person (e.g., the CFO) must perform an action, design for that person. Do not suggest John do it himself.
+- arlpsu (193147501194) is the commercial master payer. arlpsu-govcloud (117021256943) is its linked GovCloud account. Marketplace is commercial only.
 
-## AWS CLI Profiles
+## AWS CLI
 
-- Profiles live in `~/.aws/config`. Do not run bare `aws` commands. The default profile has no credentials. Always pass `--profile`.
-- Commercial profiles all share `sso-session arlpsu-commercial` (start URL `https://arlpsu.awsapps.com/start`). One `aws sso login --profile arlpsu-commercial` covers every commercial profile.
-- GovCloud profiles all share `sso-session arlpsu-govcloud` (start URL `https://start.us-gov-home.awsapps.com/directory/arlpsu`, region `us-gov-west-1`). It is a separate login from commercial.
-- When a token is expired, tell John to run `! aws sso login --profile <name>`. Do not try to work around it.
-- A backup of the config from before the commercial consolidation is at `~/.aws/config.bak-20261125`.
+- Always pass `--profile`. The default profile has no credentials.
+- Commercial profiles share one SSO session and GovCloud profiles share another. They are separate logins.
+- When a token is expired, tell John to run `! aws sso login --profile <name>`. Do not work around it.
+- Spell out the IDC instance ARN in commands. Piping it through `xargs` mangled it once.
+- The `aws-mcp` MCP server has failed to connect in past sessions. Fall back to the CLI.
+- Do not change `~/.aws/config` without saying so, and back it up first.
 
-## IAM Identity Center
+## Verification
 
-- Instance: `arn:aws:sso:::instance/ssoins-72239915bfbe637d`, identity store `d-9066270627`, region us-east-1. Owned by 193147501194.
-- Existing permission sets: `SecurityAudit`, `AdministratorAccess`, `ProjectAdmin`, `ViewOnlyAccess`. Session duration is 4 hours (8 for ViewOnly).
-- Groups are synced from Entra. Naming: `AWS-Global-*` for org-wide groups and `AWS-<Project>-Admins` for project groups.
-- Permission sets are defined outside this repo. John believes they are managed through the arl-its account (808000717462, a delegated admin for `sso.amazonaws.com`). Expect AWS to require some actions on the management account itself to be done from arlpsu. Verify before assuming.
-- When passing the instance ARN in shell commands, spell it out. Piping it through `xargs` mangled it once.
+- Verify AWS managed policy names and contents with `aws iam get-policy` before recommending them. Do not recommend from memory.
+- Say what was checked and what was not. Do not state that a policy or permission set will work unless it was tested.
 
-## In-Progress Work: CFO Marketplace Approver Role
+## Documentation
 
-Request: Red Hat is issuing a private offer through AWS Marketplace for the ARL subscription renewal. The CFO must log in to arlpsu (193147501194) and accept the agreement. She should have Marketplace accept/deny plus full billing and Cost Explorer, and nothing else.
+- Put configuration, design, and status in `docs/`, not in this file.
+- Name docs in Title-Case-With-Hyphens, like the existing ones.
+- Update the relevant doc when AWS changes are made, and keep the "Last updated" date current.
 
-Planned design (not yet built):
+## Git
 
-- Permission set `BillingMarketplaceApprover`, 4-hour session.
-- Entra group `AWS-Global-BillingApprovers`, containing the CFO and one backup. Assign only to account 193147501194.
-- Policies (names verified to exist unless noted):
-  - `AWSMarketplaceManageSubscriptions`
-  - `AWSMarketplaceRead-only`
-  - `AWSLicenseManagerConsumptionPolicy` (not `ConsumerPolicy`, which does not exist)
-  - Billing access: `job-function/Billing` is NOT yet verified. `AWSBillingReadOnlyAccess` exists.
-- Do not use `AWSMarketplaceFullAccess` or `AWSPrivateMarketplaceRequests`.
-- Still to verify: that "IAM user and role access to Billing information" is activated in the management account, and that Entra enforces MFA for the CFO.
-- Still to verify: that the offer is addressed to 193147501194 and when it expires, and that the account's billing and tax setup is complete.
-
-## Working Rules for This Repo
-
-- John performs all `git add` and `git commit`. Provide the commands and message, but never run them.
-- SCPs are in `scps/`. The management account is not affected by SCPs. The only SCP on it is `FullAWSAccess`.
-- The `aws-mcp` MCP server has failed to connect in past sessions. Fall back to the CLI profiles.
+- John performs all `git add` and `git commit`. Provide the commands and message. Never run them.
 - Do not add Claude attribution lines to commit messages, per John's global instructions.
