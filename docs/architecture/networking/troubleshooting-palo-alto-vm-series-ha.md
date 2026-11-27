@@ -368,7 +368,7 @@ Check that both firewalls pass EC2 status checks (see Step 1). Then confirm in P
 - Pull FW1's system logs from before the hang.
 - Treat HA failover as unproven until tested.
 - Done 2026-11-27: alerting was added in the `arl-monitoring-firewall` stack (see `docs/Firewall-Monitoring.md`). It alarms on EC2 status checks, an unreachable management port, lost Panorama contact, and a Security VPC TGW traffic drop. A real failure has not yet exercised it.
-- Built 2026-11-27, not yet deployed: auto-restart of a hung firewall (`its-firewall-monitor-remediator`), default `dry-run`. See "Auto-remediation" in `docs/Firewall-Monitoring.md`. If it restarts a firewall, you still need to find the cause.
+- Deployed 2026-11-27 in `dry-run`: auto-restart of a hung firewall (`its-firewall-monitor-remediator`), default `dry-run`. See "Auto-remediation" in `docs/Firewall-Monitoring.md`. If it restarts a firewall, you still need to find the cause.
 - Done 2026-11-27: set 90 day retention on `/aws/vpc/flowlogs-paloalto-troubleshooting`, which had none and held about 12.7 GB. This matches the `/arl/vpcflow/*` groups. This group appears to be a temporary troubleshooting flow log on the Security VPC and may be redundant with `/arl/vpcflow/vpc-057fb606a1c0b1f2d`. No PAN-OS system or HA logs are shipped to CloudWatch.
 
 **Context:** CloudTrail shows ENI detaches, which indicate failovers, on 2026-11-15, 11-16, 11-18, 11-19, 11-20, and 11-26, along with manual reboots and stop/starts on 11-18, 11-19, and 11-23.

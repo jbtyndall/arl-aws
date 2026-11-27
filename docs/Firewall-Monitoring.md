@@ -1,6 +1,6 @@
 # Firewall Monitoring
 
-Last updated: 2026-11-27 (auto-remediation added, not yet deployed)
+Last updated: 2026-11-27
 
 Detects a hung or disconnected Palo Alto VM-Series firewall in the ARL-ITS account (890884507059, us-gov-west-1) and emails an alert through SES. Built after the 2026-11-26 incident, where FW2 was dead for about 28 hours and FW1 hung with no peer, and nothing alerted. See `docs/architecture/networking/troubleshooting-palo-alto-vm-series-ha.md`.
 
@@ -25,7 +25,7 @@ Alarms send on both ALARM and OK. CloudWatch only notifies on state changes, so 
 
 ## Auto-remediation
 
-A fourth Lambda (`its-firewall-monitor-remediator`) listens on the same SNS topic and can stop and start a hung firewall. It is **built but not yet deployed**. When deployed it starts in `dry-run`: it emails what it would have done and changes nothing.
+A fourth Lambda (`its-firewall-monitor-remediator`) listens on the same SNS topic and can stop and start a hung firewall. It was deployed 2026-11-27 in `dry-run` mode: it emails what it would have done and changes nothing. A dry-run email has not yet been seen.
 
 | Alarm | Action |
 | --- | --- |
@@ -43,7 +43,7 @@ Guards, all checked on every run:
 
 Every action, dry run, and failure sends an email. A failed restart emails the command to start the instance by hand.
 
-Change the mode (run in Git Bash or PowerShell):
+Change the mode. Run this in **PowerShell**. Git Bash rewrites the leading `/` in the parameter name and the command fails with `ParameterNotFound` (in Git Bash, prefix it with `MSYS_NO_PATHCONV=1`):
 
 ```
 aws ssm put-parameter --profile arl-its-govcloud --region us-gov-west-1 --name /arl-monitoring/firewall/auto-restart --type String --overwrite --value enabled
@@ -59,23 +59,110 @@ Limits:
 - The stop waits up to about 12 minutes. If it times out, the instance is left stopping or stopped and the failure email says how to start it.
 - Not exercised against real EC2 yet. Unit tests use mocks.
 
-Rollout: deploy in `dry-run`, force an alarm to confirm the dry-run email (`aws cloudwatch set-alarm-state` on `its-fw2-instance-status-failed`), then set `enabled`. Note a forced alarm in `enabled` mode will really restart the firewall if the guards pass.
+Rollout: it is in `dry-run` now. Force an alarm to confirm the dry-run email (`aws cloudwatch set-alarm-state` on `its-fw2-instance-status-failed`), then set `enabled`. Note a forced alarm in `enabled` mode will really restart the firewall if the guards pass.
 
-## Design
+## Architecture
+
+### Components
+
+| Component | Name | Runs in | Purpose |
+| --- | --- | --- | --- |
+| EventBridge rule | `its-firewall-monitor-collector-schedule` | n/a | Triggers the collector every minute |
+| Lambda (VPC) | `its-firewall-monitor-probe` | its-mgmt-vpc, prod subnets | Opens a TCP 443 connection to each firewall management IP and returns the results |
+| Lambda | `its-firewall-monitor-collector` | AWS service network (no VPC) | Invokes the probe and publishes `ManagementReachable` to the `ARL/FirewallMonitor` namespace |
+| VPC flow log | `/its/firewall-monitoring/mgmt-subnet-flowlogs` | Security VPC management subnet | Records traffic between each firewall and Panorama. Two metric filters turn it into metrics |
+| CloudWatch alarms | `its-fw*-*`, `its-security-tgw-traffic-dropped` | n/a | Seven alarms. All send to the SNS topic on ALARM and OK |
+| SNS topic | `its-firewall-alerts` | n/a | Fan-out point for alarm notifications |
+| Lambda | `its-firewall-monitor-notifier` | no VPC | Formats each alarm and emails it through SES |
+| Lambda | `its-firewall-monitor-remediator` | no VPC | Stops and starts a hung firewall when the guards allow it, then emails the result |
+| SSM parameter | `/arl-monitoring/firewall/auto-restart` | n/a | Mode switch for the remediator: `enabled`, `dry-run`, or `disabled` |
+
+### Data flow
 
 ```
-EventBridge (1 min) -> collector Lambda (no VPC) -> invokes probe Lambda (its-mgmt-vpc) -> TCP 443 to 10.251.253.4 / .5
-                       collector publishes ARL/FirewallMonitor ManagementReachable (Firewall=fw1|fw2)
+Detection
+  EventBridge (1 min) -> collector -> probe (its-mgmt-vpc) -> TCP 443 to FW1 10.251.253.4 and FW2 10.251.253.5
+                         collector -> CloudWatch metric ARL/FirewallMonitor ManagementReachable (Firewall=fw1|fw2)
+  Security VPC mgmt subnet flow log -> CloudWatch Logs -> metric filters -> Fw1/Fw2PanoramaFlowRecords
+  EC2 and Transit Gateway publish StatusCheckFailed_Instance and BytesIn on their own
 
-Alarms -> SNS topic its-firewall-alerts -> notifier Lambda (no VPC) -> SES -> email
-                                         -> optional backup email (raw alarm, no SES or Lambda)
+Alerting
+  CloudWatch alarms (7) -> SNS its-firewall-alerts -+-> notifier Lambda -> SES -> email (every alarm)
+                                                    +-> remediator Lambda -> EC2 stop/start -> SES -> email
+                                                    +-> optional backup email (raw alarm, no SES or Lambda)
 ```
 
-- The probe is in the its-mgmt-vpc because it has a route to the firewall management subnet through the Transit Gateway. The path avoids the firewall data plane, so the probe still works when the firewall is hung.
-- The probe has no route to AWS APIs, so it only returns results. The collector, which is outside any VPC, publishes the metrics. This avoids needing NAT or VPC endpoints.
-- The notifier reaches SES over the AWS service network, so the alert path does not depend on the firewall.
-- A dedicated flow log on the firewall management subnet (`subnet-0dd94aa9190f01710`) feeds two metric filters. It does not depend on the existing `/aws/vpc/flowlogs-paloalto-troubleshooting` log group.
-- Each alarm's description holds the "what it means and what to do" text. The notifier just formats it.
+### Diagram
+
+```mermaid
+flowchart LR
+  subgraph MGMT["its-mgmt-vpc"]
+    PROBE["Lambda: probe<br/>TCP 443"]
+  end
+
+  subgraph SEC["its-security-vpc"]
+    FW1["FW1 mgmt 10.251.253.4"]
+    FW2["FW2 mgmt 10.251.253.5"]
+    FLOW["Subnet flow log"]
+  end
+
+  subgraph ACCT["arl-its account, us-gov-west-1 (no VPC)"]
+    EB["EventBridge<br/>every 1 min"] --> COLL["Lambda: collector"]
+    COLL -->|invoke| PROBE
+    COLL -->|PutMetricData| CW[("CloudWatch<br/>ARL/FirewallMonitor")]
+    LOGS[("CloudWatch Logs")] -->|metric filters| CW
+    EC2M[("AWS/EC2<br/>StatusCheckFailed_Instance")] --> ALARMS
+    TGWM[("AWS/TransitGateway<br/>BytesIn")] --> ALARMS
+    CW --> ALARMS{{"7 CloudWatch alarms"}}
+    ALARMS -->|ALARM and OK| SNS(["SNS: its-firewall-alerts"])
+    SNS --> NOTIF["Lambda: notifier"]
+    SNS --> REM["Lambda: remediator"]
+    SSM[/"SSM: auto-restart<br/>enabled | dry-run | disabled"/] -.->|mode| REM
+    NOTIF --> SES["SES"]
+    REM -->|"stop, wait, start<br/>(enabled only)"| EC2API["EC2 API"]
+    REM --> SES
+  end
+
+  PROBE -->|"via Transit Gateway"| FW1
+  PROBE --> FW2
+  FW1 --- FLOW
+  FW2 --- FLOW
+  FLOW --> LOGS
+  EC2API -.->|restarts| FW1
+  EC2API -.->|restarts| FW2
+  SES --> MAIL["jbt8@arl.psu.edu<br/>jbt8@psu.edu"]
+```
+
+### Design decisions
+
+- **Four independent signals.** No single signal is trusted. EC2 status checks only prove the VM answers on its primary ENI, so they missed a dead PAN-OS management plane. The probe covers that. Flow logs and TGW traffic cover loss of Panorama contact and a silent data plane.
+- **The probe runs in the its-mgmt-vpc.** That VPC has a route to the firewall management subnet through the Transit Gateway. The path does not cross the firewall data plane, so the probe still works when a firewall is hung.
+- **The probe returns results and does not publish them.** It has no route to AWS APIs. The collector, outside any VPC, does the publishing. This avoids NAT gateways and VPC endpoints for a once-a-minute check.
+- **Missing data means failure.** Every alarm except the EC2 status check treats missing data as breaching. If the probe, collector, or flow log stops, the alarm fires instead of going quiet. The EC2 status alarm treats missing data as healthy because a stopped instance publishes nothing and that is expected.
+- **The alert path avoids the firewall.** The notifier is outside any VPC and reaches SES over the AWS service network. An outage of the Security VPC cannot block the alert about it.
+- **Notifier and remediator are separate functions.** The notifier can only send email. Only the remediator can stop and start instances, and only the two firewall instances. A bug or timeout in the restart logic (up to about 12 minutes) cannot block alerts. The notifier does not read the mode switch, so alarm emails continue when auto-restart is `disabled`.
+- **Alarm text lives on the alarm.** Each alarm description carries "what it means and what to do". The notifier only formats it, so operators can read the same guidance in the CloudWatch console.
+- **The remediator holds no state.** A stop and start resets the instance `LaunchTime`, which is the loop guard. No database is needed.
+- **Logging.** All Lambdas write the standard ARL log format. Every stop and start is logged at INFO with the instance ID and state change. Log groups keep 14 days.
+
+### Security and access
+
+- Each Lambda has its own IAM role (`its-firewall-monitor-*-role`). The names deliberately avoid the `ARL-` prefix so an SSO admin can manage them (see the SCP caveat under Known limits).
+- Remediator permissions: `ec2:StopInstances` and `ec2:StartInstances` on the two firewall instance ARNs only, `ec2:DescribeInstances` (read-only, no resource-level scoping exists), `ssm:GetParameter` on the one mode parameter, and `ses:SendEmail` restricted to the sender address.
+- Probe security group allows egress only to TCP 443 in the firewall management CIDR. There is no inbound rule.
+- `cloudwatch:PutMetricData` for the collector is restricted to the `ARL/FirewallMonitor` namespace.
+- No secrets are stored. Everything uses IAM roles.
+
+### Failure modes
+
+| Failure | Result |
+| --- | --- |
+| Probe, collector, or flow log stops | Management and Panorama alarms fire (missing data is breaching) |
+| Firewall hangs | Instance status and management alarms fire. The remediator restarts it if enabled and guards pass |
+| Both firewalls down | Remediator restarts neither if the peer is stopped or stopping. A person decides |
+| Restart fails or times out | Failure email with the manual start command. Lambda retries are off |
+| SES rejects the message (unverified recipient while in sandbox) | Notifier raises so SNS retries. Remediator logs the error. Use the optional backup email for a path independent of SES |
+| Remediator misbehaves | Set the SSM parameter to `disabled`. No redeploy needed |
 
 ## Files
 
@@ -138,10 +225,9 @@ To add a backup email that receives the raw alarm without SES or Lambda, add `--
 - **SES sandbox.** arl-its is in the SES sandbox, so every recipient must be a verified identity. The domain identity is `FAILED`. Verified identities are `aws@arl.psu.edu` (sender), `jbt8@arl.psu.edu`, and `jbt8@psu.edu`. See `docs/Centralized-SES-Email-Sending.md`.
 - **Adding a recipient.** Verify the address in SES first, or SES rejects the whole message and nobody gets the alert. Run `aws sesv2 create-email-identity --profile arl-its-govcloud --region us-gov-west-1 --email-identity <address>`, have the owner click the link in the verification email (it expires in 24 hours), then redeploy with the full list: `--parameter-overrides AlertToAddresses=jbt8@arl.psu.edu,jbt8@psu.edu,<address>`.
 - **Redeploys keep old parameter values.** `aws cloudformation deploy` does not pick up changed template defaults for parameters already set on the stack. Pass `--parameter-overrides AlertToAddresses=...` explicitly whenever the recipient list changes.
-- **SES send permission is untested.** The notifier sends as `aws@arl.psu.edu` using its IAM role. Whether that works in the sandbox is what the forced-alarm test proves.
 - **No SCP change needed now.** The SES SCP (`ARL-Deny-SES-Send-Except-Approved`) is attached only to ARL-ITS-Sandbox. If it is later attached to arl-its or the root, the notifier role will be blocked. Its name (`its-firewall-monitor-notifier-role`) is deliberately not `ARL-SES-Sender-*`, because `ProtectRoles` in `ARL-Guardrails-Global` stops an SSO admin from attaching policies to `ARL-*` roles. At that point, either deploy the role from a StackSet using an approved name or add an exemption.
 - **Planned restarts trip the alarms.** Restarting a firewall will fire the management and Panorama alarms for that firewall, then send OK emails.
 - **Idle overnight traffic.** If the Security VPC is truly idle, `its-security-tgw-traffic-dropped` can fire falsely. The healthy baseline observed was several GB per hour. Tune `MinimumTgwBytesIn` if needed.
-- **Lambda runtime.** The template defaults to `python3.12`. The account's existing functions use 3.8 and 3.9, and 3.12 availability in GovCloud was not verified. If deploy fails on the runtime, set `--parameter-overrides LambdaRuntime=python3.9`.
-- **Unit tests use mocks.** boto3 is stubbed when not installed locally. Tests do not touch AWS.
+- **Lambda runtime.** The template defaults to `python3.12`, which works in GovCloud Lambda. The account's older functions use 3.8 and 3.9.
+- **Unit tests use mocks.** Tests do not touch AWS. Install boto3 locally to run them (`pip install boto3`).
 - **Retention.** The stack's log groups keep 14 days. The older `/aws/vpc/flowlogs-paloalto-troubleshooting` group still has no retention and is not managed here.
