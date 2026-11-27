@@ -236,6 +236,113 @@ If the active firewall is hung and the standby did not take over:
 
 Data ENIs stay attached to a stopped instance until the peer moves them.
 
+## Manual Health Checks and Restart Commands
+
+Use these when you have Panorama (read-only is enough) and AWS access, but no direct firewall login. EC2 status checks only prove the VM answers on its primary ENI. They do not prove PAN-OS is working. A firewall can show "ok" in EC2 and still be dead. On 2026-11-27, FW2 was in exactly that state.
+
+### Check 1: Panorama Managed Devices
+
+Panorama is at 10.254.254.50.
+
+1. Open the **PANORAMA** tab, then **Managed Devices > Summary**.
+2. Find the DC-AWS group. It lists `its-aws-usgw1-fw1` and `its-aws-usgw1-fw2`.
+3. Both firewalls should show **Connected** in the Device State column. The group header shows how many are connected, for example `DC-AWS (1/2 Devices Connected)`.
+
+A firewall showing **Disconnected** while EC2 reports it healthy has a dead PAN-OS management plane or lost its path to Panorama. The HA Status column was blank for these firewalls on 2026-11-27, so Panorama does not show HA state here.
+
+### Check 2: Panorama HA system logs
+
+1. Open the **MONITOR** tab, then **Logs > System**.
+2. Enter the filter `(subtype eq ha)` and press Enter. Make sure the closing parenthesis is there.
+3. Set the time range in the top-right dropdown (for example, Last 24 Hrs).
+4. To see when a firewall dropped off Panorama, filter on `(description contains 'its-aws-usgw1-fw2')` and look for disconnect entries.
+
+On 2026-11-27 the HA filter returned no results for the previous 24 hours, which includes the FW1 hang. Either the firewalls do not forward HA logs to Panorama or nothing was logged. Do not treat an empty result as proof that HA is healthy.
+
+### Check 3: HA state on the firewall (through Panorama)
+
+This has not been tried yet. As of 2026-11-27, Panorama only showed read-only template settings.
+
+1. In the top-left dropdown on any Panorama page (it shows `Panorama` by default), choose `its-aws-usgw1-fw1`. Panorama should open that firewall's own interface. FW2 cannot be reached this way while it is disconnected.
+2. Check the **Dashboard > High Availability** widget for the local state and the peer state.
+3. Check **Device > High Availability** for the local HA mode, peer IP, preemption, and monitoring settings.
+
+HA settings are not in the `Network-AWS-FW` template. On 2026-11-27, Enable HA was unchecked there and the peer IP, group ID, and priority were blank. The HA configuration appears to be local on each firewall, so the template view cannot confirm it.
+
+### Check 4: Can you reach the management interfaces?
+
+Run in **PowerShell** from a workstation on the ARL network:
+
+```
+Test-NetConnection 10.251.253.4 -Port 443
+```
+
+```
+Test-NetConnection 10.251.253.5 -Port 443
+```
+
+10.251.253.4 is FW1 and 10.251.253.5 is FW2. `TcpTestSucceeded : True` means the management web interface is responding. `False` (and a ping timeout) means PAN-OS on that firewall is not responding.
+
+Both management ENIs are in the same subnet with the same security group, so a difference in result points to the firewall and not to AWS networking. Verify that again if the subnet or security groups change.
+
+### Restart a firewall from the command line
+
+Run in **PowerShell** or **Git Bash**. These commands use the GovCloud session, so sign in first:
+
+```
+aws sso login --profile arl-its-govcloud
+```
+
+**Only restart the firewall that is hung or unreachable.** If only one is unhealthy, never stop both. The firewall carrying traffic is the one holding all four ENIs. Do not stop the healthy active firewall.
+
+Restart FW1 (`i-0bf7c11474ef2d72e`). First stop it:
+
+```
+aws ec2 stop-instances --profile arl-its-govcloud --region us-gov-west-1 --instance-ids i-0bf7c11474ef2d72e
+```
+
+Wait until it is stopped:
+
+```
+aws ec2 wait instance-stopped --profile arl-its-govcloud --region us-gov-west-1 --instance-ids i-0bf7c11474ef2d72e
+```
+
+Then start it:
+
+```
+aws ec2 start-instances --profile arl-its-govcloud --region us-gov-west-1 --instance-ids i-0bf7c11474ef2d72e
+```
+
+Restart FW2 (`i-0d0b4003b39f93438`) the same way, with its instance ID. First stop it:
+
+```
+aws ec2 stop-instances --profile arl-its-govcloud --region us-gov-west-1 --instance-ids i-0d0b4003b39f93438
+```
+
+Wait until it is stopped:
+
+```
+aws ec2 wait instance-stopped --profile arl-its-govcloud --region us-gov-west-1 --instance-ids i-0d0b4003b39f93438
+```
+
+Then start it:
+
+```
+aws ec2 start-instances --profile arl-its-govcloud --region us-gov-west-1 --instance-ids i-0d0b4003b39f93438
+```
+
+A stop and start is used instead of a soft reboot because a hung guest may ignore a reboot. Stopping the active firewall also gives the standby a definitive heartbeat loss, though on 2026-11-26 and 2026-11-27 the standby did not take over.
+
+### Verify after a restart
+
+Check the instance state and how many ENIs each firewall holds. The active firewall should have 4 and the standby 2:
+
+```
+aws ec2 describe-instances --profile arl-its-govcloud --region us-gov-west-1 --instance-ids i-0bf7c11474ef2d72e i-0d0b4003b39f93438 --query "Reservations[].Instances[].[Tags[?Key=='Name']|[0].Value,State.Name,length(NetworkInterfaces)]" --output text
+```
+
+Check that both firewalls pass EC2 status checks (see Step 1). Then confirm in Panorama that both show **Connected**, and re-run Check 4. Finally, confirm the Transit Gateway `BytesIn` metric for the Security VPC attachment is above zero (see Step 1).
+
 ## Incident: 2026-11-26 Active Firewall Hang, No HA Failover
 
 **Impact:** Traffic through the Security VPC dropped from about 4 to 5 GB/hr to about 0 starting around 18:00 to 19:00 ET on 2026-11-26. It was restored at about 09:54 ET on 2026-11-27, roughly 15 hours.
@@ -245,9 +352,10 @@ Data ENIs stay attached to a stopped instance until the peer moves them.
 - FW1 (i-0bf7c11474ef2d72e) became active at 05:32 ET on 2026-11-26 by attaching the TRUST and UNTRUST ENIs to itself.
 - FW1's EC2 instance status check began failing between 17:38 and 18:38 ET the same day. The system status stayed OK, so the AWS host was healthy and the guest was hung.
 - FW2 (i-0d0b4003b39f93438) stayed standby. It made no EC2 API calls and did not take over, including during a 3 minute window on 2026-11-27 when FW1 was stopped.
+- On 2026-11-27, Panorama showed FW2 as **Disconnected** (`DC-AWS (1/2 Devices Connected)`). FW2's management interface did not answer ping or TCP 443 from an ARL workstation, while FW1's answered. EC2 reported FW2 healthy the whole time. Both management ENIs share a subnet, security group, and AMI, so this was a PAN-OS problem on FW2 and not AWS networking. FW2 had no working management plane, which likely explains why it never took over. When it became unreachable is not known.
 - AWS routing was correct throughout: the TGW route table default route pointed at the attached TRUST ENI, the public route table pointed at the IGW, and the UNTRUST ENI had its EIP and source/destination check disabled. There were no TGW blackhole or no-route drops.
 
-**Resolution:** FW1 was stopped and started from EC2 on 2026-11-27. It passed status checks at 09:53 ET and traffic resumed at 09:54 ET.
+**Resolution:** FW1 was stopped and started from EC2 on 2026-11-27. It passed status checks at 09:53 ET and traffic resumed at 09:54 ET. FW2 was then stopped and started the same way. It passed status checks at about 10:21 ET, and its management interface answered on TCP 443 at 10:21 ET. FW1 kept all four data ENIs and traffic was unaffected.
 
 **Not determined:** why FW1 hung, and why FW2 did not take over. Neither firewall's PAN-OS logs or HA state were reviewed because the AWS-side responders do not have firewall access.
 
