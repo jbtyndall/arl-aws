@@ -1,6 +1,6 @@
 # Firewall Monitoring
 
-Last updated: 2026-11-27
+Last updated: 2026-11-27 (auto-remediation added, not yet deployed)
 
 Detects a hung or disconnected Palo Alto VM-Series firewall in the ARL-ITS account (890884507059, us-gov-west-1) and emails an alert through SES. Built after the 2026-11-26 incident, where FW2 was dead for about 28 hours and FW1 hung with no peer, and nothing alerted. See `docs/architecture/networking/troubleshooting-palo-alto-vm-series-ha.md`.
 
@@ -22,6 +22,44 @@ EC2 status checks do not prove PAN-OS is healthy. FW2 showed "ok" in EC2 while i
 Missing data counts as a failure for every alarm except the EC2 status checks. A dead monitor therefore alarms instead of staying silent.
 
 Alarms send on both ALARM and OK. CloudWatch only notifies on state changes, so there is no repeat spam during a long outage.
+
+## Auto-remediation
+
+A fourth Lambda (`its-firewall-monitor-remediator`) listens on the same SNS topic and can stop and start a hung firewall. It is **built but not yet deployed**. When deployed it starts in `dry-run`: it emails what it would have done and changes nothing.
+
+| Alarm | Action |
+| --- | --- |
+| `its-fw1/2-instance-status-failed` | Stop and start that firewall, active or standby |
+| `its-fw1/2-management-unreachable` | Stop and start only if it is the standby (2 ENIs). If it is the active firewall (3 or more ENIs), email only and let a person decide |
+| Panorama contact lost, TGW traffic dropped | No action, alert only |
+
+Guards, all checked on every run:
+
+- **Mode switch.** SSM parameter `/arl-monitoring/firewall/auto-restart` is `enabled`, `dry-run`, or `disabled`. Anything else is treated as disabled.
+- **One at a time.** Skips if the other firewall is pending, stopping, stopped, or shutting down.
+- **Loop protection.** Skips if the instance launched less than 60 minutes ago. A stop and start resets the launch time, so no database is needed.
+- **No retries.** Lambda retries are off, so a failure cannot trigger a second restart.
+- **Scoped IAM.** Stop and start are allowed only on the two firewall instance ARNs.
+
+Every action, dry run, and failure sends an email. A failed restart emails the command to start the instance by hand.
+
+Change the mode (run in Git Bash or PowerShell):
+
+```
+aws ssm put-parameter --profile arl-its-govcloud --region us-gov-west-1 --name /arl-monitoring/firewall/auto-restart --type String --overwrite --value enabled
+```
+
+Use `dry-run` or `disabled` as the value to turn it back down. The template sets the parameter to `dry-run` only when it is created or when the template value changes, so a normal redeploy does not reset a mode set by hand.
+
+Limits:
+
+- It does not fix the cause. Someone with firewall access still needs to find out why it hung.
+- It can hide that HA failover is unproven. A restarted active firewall may come back before the standby ever takes over.
+- A restart takes the firewall's traffic down for several minutes if it is the active one. That is still better than a 15 hour outage.
+- The stop waits up to about 12 minutes. If it times out, the instance is left stopping or stopped and the failure email says how to start it.
+- Not exercised against real EC2 yet. Unit tests use mocks.
+
+Rollout: deploy in `dry-run`, force an alarm to confirm the dry-run email (`aws cloudwatch set-alarm-state` on `its-fw2-instance-status-failed`), then set `enabled`. Note a forced alarm in `enabled` mode will really restart the firewall if the guards pass.
 
 ## Design
 
@@ -47,6 +85,7 @@ Alarms -> SNS topic its-firewall-alerts -> notifier Lambda (no VPC) -> SES -> em
 | `monitoring/lambda/probe/handler.py` | TCP probe |
 | `monitoring/lambda/collector/handler.py` | Scheduled collector and metric publisher |
 | `monitoring/lambda/notifier/handler.py` | SNS to SES emailer |
+| `monitoring/lambda/remediator/handler.py` | Auto stop/start of a hung firewall (mode set in SSM) |
 | `monitoring/tests/` | Unit tests |
 
 ## Deploy

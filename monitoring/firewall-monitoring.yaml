@@ -148,6 +148,105 @@ Resources:
       Protocol: lambda
       Endpoint: !GetAtt NotifierFunction.Arn
 
+  # -------------------------------------------------------------- Remediator
+  AutoRestartModeParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /arl-monitoring/firewall/auto-restart
+      Type: String
+      Value: dry-run
+      Description: "Firewall auto-restart mode. enabled = stop and start a hung firewall. dry-run = email only. disabled = do nothing."
+
+  RemediatorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: its-firewall-monitor-remediator-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: restart-firewalls
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/its-firewall-monitor-remediator:*
+              - Effect: Allow
+                Action: ec2:DescribeInstances
+                Resource: "*"
+              - Effect: Allow
+                Action: [ec2:StopInstances, ec2:StartInstances]
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${Firewall1InstanceId}
+                  - !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${Firewall2InstanceId}
+              - Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${AutoRestartModeParameter}
+              - Effect: Allow
+                Action: [ses:SendEmail]
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    ses:FromAddress: !Ref AlertFromAddress
+
+  RemediatorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/its-firewall-monitor-remediator
+      RetentionInDays: !Ref LogRetentionDays
+
+  RemediatorFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: RemediatorLogGroup
+    Properties:
+      FunctionName: its-firewall-monitor-remediator
+      Description: Stops and starts a hung firewall on high-confidence alarms. Controlled by the SSM parameter /arl-monitoring/firewall/auto-restart.
+      Runtime: !Ref LambdaRuntime
+      Handler: handler.handler
+      Code: lambda/remediator
+      Role: !GetAtt RemediatorRole.Arn
+      Timeout: 900
+      MemorySize: 128
+      Environment:
+        Variables:
+          ALERT_FROM: !Ref AlertFromAddress
+          ALERT_TO: !Ref AlertToAddresses
+          MODE_PARAMETER: !Ref AutoRestartModeParameter
+          RULES: !Sub
+            - >-
+              {"its-fw1-instance-status-failed": {"firewall": "fw1", "instance_id": "${Fw1}", "peer_instance_id": "${Fw2}", "trigger": "instance-status"},
+              "its-fw2-instance-status-failed": {"firewall": "fw2", "instance_id": "${Fw2}", "peer_instance_id": "${Fw1}", "trigger": "instance-status"},
+              "its-fw1-management-unreachable": {"firewall": "fw1", "instance_id": "${Fw1}", "peer_instance_id": "${Fw2}", "trigger": "management"},
+              "its-fw2-management-unreachable": {"firewall": "fw2", "instance_id": "${Fw2}", "peer_instance_id": "${Fw1}", "trigger": "management"}}
+            - Fw1: !Ref Firewall1InstanceId
+              Fw2: !Ref Firewall2InstanceId
+
+  RemediatorNoRetries:
+    Type: AWS::Lambda::EventInvokeConfig
+    Properties:
+      FunctionName: !Ref RemediatorFunction
+      Qualifier: $LATEST
+      MaximumRetryAttempts: 0
+
+  RemediatorInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref RemediatorFunction
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref AlertTopic
+
+  RemediatorSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AlertTopic
+      Protocol: lambda
+      Endpoint: !GetAtt RemediatorFunction.Arn
+
   # ------------------------------------------------------------------- Probe
   ProbeSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -460,3 +559,5 @@ Outputs:
     Value: !Ref NotifierFunction
   ProbeFunctionName:
     Value: !Ref ProbeFunction
+  RemediatorFunctionName:
+    Value: !Ref RemediatorFunction
