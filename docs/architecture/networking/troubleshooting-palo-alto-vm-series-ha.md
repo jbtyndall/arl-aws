@@ -352,12 +352,13 @@ Check that both firewalls pass EC2 status checks (see Step 1). Then confirm in P
 - FW1 (i-0bf7c11474ef2d72e) became active at 05:32 ET on 2026-11-26 by attaching the TRUST and UNTRUST ENIs to itself.
 - FW1's EC2 instance status check began failing between 17:38 and 18:38 ET the same day. The system status stayed OK, so the AWS host was healthy and the guest was hung.
 - FW2 (i-0d0b4003b39f93438) stayed standby. It made no EC2 API calls and did not take over, including during a 3 minute window on 2026-11-27 when FW1 was stopped.
-- On 2026-11-27, Panorama showed FW2 as **Disconnected** (`DC-AWS (1/2 Devices Connected)`). FW2's management interface did not answer ping or TCP 443 from an ARL workstation, while FW1's answered. EC2 reported FW2 healthy the whole time. Both management ENIs share a subnet, security group, and AMI, so this was a PAN-OS problem on FW2 and not AWS networking. FW2 had no working management plane, which likely explains why it never took over. When it became unreachable is not known.
+- On 2026-11-27, Panorama showed FW2 as **Disconnected** (`DC-AWS (1/2 Devices Connected)`). FW2's management interface did not answer ping or TCP 443 from an ARL workstation, while FW1's answered. EC2 reported FW2 healthy the whole time. Both management ENIs share a subnet, security group, and AMI, so this was a PAN-OS problem on FW2 and not AWS networking. FW2 had no working management plane, which likely explains why it never took over.
+- VPC flow logs (`/aws/vpc/flowlogs-paloalto-troubleshooting`) show FW2's management ENI (`eni-0e45b49ed59e3b823`) exchanged traffic with Panorama (10.254.254.50) every 15 minutes, without a gap, until 10:35 UTC (05:35 ET) on 2026-11-26. Nothing followed until FW2 was restarted on 2026-11-27. That is the same minute FW1 attached the data ENIs. The most likely sequence is that FW2 was the active firewall and died at about 05:30 ET, FW1 took over as designed, and FW1 then hung about 12 hours later with no working peer. This is inferred from timing and was not confirmed in PAN-OS logs. If it is right, HA failover worked once, and the real gaps are that nothing alerted when FW2 went Disconnected and FW2 ran dead for about 28 hours.
 - AWS routing was correct throughout: the TGW route table default route pointed at the attached TRUST ENI, the public route table pointed at the IGW, and the UNTRUST ENI had its EIP and source/destination check disabled. There were no TGW blackhole or no-route drops.
 
 **Resolution:** FW1 was stopped and started from EC2 on 2026-11-27. It passed status checks at 09:53 ET and traffic resumed at 09:54 ET. FW2 was then stopped and started the same way. It passed status checks at about 10:21 ET, and its management interface answered on TCP 443 at 10:21 ET. FW1 kept all four data ENIs and traffic was unaffected.
 
-**Not determined:** why FW1 hung, and why FW2 did not take over. Neither firewall's PAN-OS logs or HA state were reviewed because the AWS-side responders do not have firewall access.
+**Not determined:** why FW1 hung, why FW2 died at about 05:30 ET on 2026-11-26, and whether FW2 would have taken over had it been healthy. Neither firewall's PAN-OS logs or HA state were reviewed because the AWS-side responders do not have firewall access.
 
 **Open follow-up:**
 
@@ -366,6 +367,8 @@ Check that both firewalls pass EC2 status checks (see Step 1). Then confirm in P
 - Confirm FW2 can reach the EC2 API from its management interface and that it has the same IAM instance profile role (both currently use `ITS-PaloAlto-HA-InstanceRole`).
 - Pull FW1's system logs from before the hang.
 - Treat HA failover as unproven until tested.
+- Add alerting when a firewall shows Disconnected in Panorama or fails EC2 instance status checks (for example, a CloudWatch alarm on `StatusCheckFailed_Instance` for both instances).
+- Set a retention period on the `/aws/vpc/flowlogs-paloalto-troubleshooting` log group. It has none and holds about 12.7 GB. Only the Security VPC flow logs exist in CloudWatch. No PAN-OS system or HA logs are shipped there.
 
 **Context:** CloudTrail shows ENI detaches, which indicate failovers, on 2026-11-15, 11-16, 11-18, 11-19, 11-20, and 11-26, along with manual reboots and stop/starts on 11-18, 11-19, and 11-23.
 
