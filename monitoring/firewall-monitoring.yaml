@@ -1,0 +1,462 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  ITS firewall monitoring for the Palo Alto VM-Series HA pair. Detects hung or disconnected firewalls
+  (EC2 status checks, management port probe, loss of Panorama traffic, Transit Gateway traffic drop)
+  and emails alerts through SES. Deploy to arl-its (us-gov-west-1). See docs/Firewall-Monitoring.md.
+
+Parameters:
+  MgmtVpcId:
+    Type: AWS::EC2::VPC::Id
+    Default: vpc-04c5d7e62155a2145
+    Description: its-mgmt-vpc. The probe function runs here because it can reach the firewall management subnet.
+  ProbeSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Default: subnet-045a748edec0c8ed5,subnet-0fba6612d3f9848b4,subnet-021240fe7616eb5b0
+    Description: its-mgmt-vpc prod subnets for the probe function.
+  FirewallMgmtSubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Default: subnet-0dd94aa9190f01710
+    Description: Security VPC firewall management subnet. A dedicated flow log is created on it.
+  FirewallMgmtCidr:
+    Type: String
+    Default: 10.251.253.0/24
+    Description: CIDR the probe security group is allowed to reach on TCP 443.
+  Firewall1InstanceId:
+    Type: String
+    Default: i-0bf7c11474ef2d72e
+  Firewall2InstanceId:
+    Type: String
+    Default: i-0d0b4003b39f93438
+  Firewall1MgmtIp:
+    Type: String
+    Default: 10.251.253.4
+  Firewall2MgmtIp:
+    Type: String
+    Default: 10.251.253.5
+  PanoramaIp:
+    Type: String
+    Default: 10.254.254.50
+  TransitGatewayId:
+    Type: String
+    Default: tgw-09af6fe19682dc2ec
+  SecurityAttachmentId:
+    Type: String
+    Default: tgw-attach-0a18e5d1ef249dfae
+    Description: Transit Gateway attachment for the Security VPC.
+  MinimumTgwBytesIn:
+    Type: Number
+    Default: 10485760
+    Description: Alarm when BytesIn from the Security VPC attachment stays below this many bytes per 5 minutes for 15 minutes. Normal traffic is several GB per hour.
+  AlertFromAddress:
+    Type: String
+    Default: aws@arl.psu.edu
+    Description: SES identity used as the From address. Must be verified in SES.
+  AlertToAddresses:
+    Type: String
+    Default: jbt8@arl.psu.edu
+    Description: Comma-separated recipients. While SES is in sandbox, every recipient must be a verified SES identity.
+  BackupAlertEmail:
+    Type: String
+    Default: ""
+    Description: Optional. Receives the raw CloudWatch alarm notification directly from SNS, independent of SES and Lambda.
+  LambdaRuntime:
+    Type: String
+    Default: python3.12
+  LogRetentionDays:
+    Type: Number
+    Default: 14
+
+Conditions:
+  HasBackupEmail: !Not [!Equals [!Ref BackupAlertEmail, ""]]
+
+Resources:
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: its-firewall-alerts
+
+  BackupEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasBackupEmail
+    Properties:
+      TopicArn: !Ref AlertTopic
+      Protocol: email
+      Endpoint: !Ref BackupAlertEmail
+
+  # ---------------------------------------------------------------- Notifier
+  NotifierRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: its-firewall-monitor-notifier-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: send-alert-email
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/its-firewall-monitor-notifier:*
+              - Effect: Allow
+                Action: [ses:SendEmail]
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    ses:FromAddress: !Ref AlertFromAddress
+
+  NotifierLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/its-firewall-monitor-notifier
+      RetentionInDays: !Ref LogRetentionDays
+
+  NotifierFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: NotifierLogGroup
+    Properties:
+      FunctionName: its-firewall-monitor-notifier
+      Description: Emails firewall CloudWatch alarm notifications through SES.
+      Runtime: !Ref LambdaRuntime
+      Handler: handler.handler
+      Code: lambda/notifier
+      Role: !GetAtt NotifierRole.Arn
+      Timeout: 30
+      MemorySize: 128
+      Environment:
+        Variables:
+          ALERT_FROM: !Ref AlertFromAddress
+          ALERT_TO: !Ref AlertToAddresses
+          RUNBOOK_TEXT: "docs/architecture/networking/troubleshooting-palo-alto-vm-series-ha.md (sections: Manual Health Checks and Restart Commands, Recovery) and docs/Firewall-Monitoring.md in the arl-aws repo."
+
+  NotifierInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref NotifierFunction
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref AlertTopic
+
+  NotifierSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AlertTopic
+      Protocol: lambda
+      Endpoint: !GetAtt NotifierFunction.Arn
+
+  # ------------------------------------------------------------------- Probe
+  ProbeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: its-firewall-monitor-probe-sg
+      GroupDescription: Firewall monitor probe. Outbound TCP 443 to the firewall management subnet only.
+      VpcId: !Ref MgmtVpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref FirewallMgmtCidr
+          Description: Firewall management web interface
+
+  ProbeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: its-firewall-monitor-probe-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+
+  ProbeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/its-firewall-monitor-probe
+      RetentionInDays: !Ref LogRetentionDays
+
+  ProbeFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: ProbeLogGroup
+    Properties:
+      FunctionName: its-firewall-monitor-probe
+      Description: Tests TCP connectivity to the firewall management interfaces from the its-mgmt-vpc.
+      Runtime: !Ref LambdaRuntime
+      Handler: handler.handler
+      Code: lambda/probe
+      Role: !GetAtt ProbeRole.Arn
+      Timeout: 30
+      MemorySize: 128
+      VpcConfig:
+        SubnetIds: !Ref ProbeSubnetIds
+        SecurityGroupIds: [!Ref ProbeSecurityGroup]
+
+  # --------------------------------------------------------------- Collector
+  CollectorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: its-firewall-monitor-collector-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: probe-and-publish
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/its-firewall-monitor-collector:*
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt ProbeFunction.Arn
+              - Effect: Allow
+                Action: cloudwatch:PutMetricData
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace: ARL/FirewallMonitor
+
+  CollectorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/its-firewall-monitor-collector
+      RetentionInDays: !Ref LogRetentionDays
+
+  CollectorFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: CollectorLogGroup
+    Properties:
+      FunctionName: its-firewall-monitor-collector
+      Description: Runs the probe every minute and publishes ManagementReachable metrics.
+      Runtime: !Ref LambdaRuntime
+      Handler: handler.handler
+      Code: lambda/collector
+      Role: !GetAtt CollectorRole.Arn
+      Timeout: 45
+      MemorySize: 128
+      Environment:
+        Variables:
+          PROBE_FUNCTION_NAME: !Ref ProbeFunction
+          PROBE_PORT: "443"
+          TARGETS: !Sub fw1=${Firewall1MgmtIp},fw2=${Firewall2MgmtIp}
+
+  CollectorSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: its-firewall-monitor-collector-schedule
+      ScheduleExpression: rate(1 minute)
+      State: ENABLED
+      Targets:
+        - Id: collector
+          Arn: !GetAtt CollectorFunction.Arn
+
+  CollectorSchedulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CollectorFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt CollectorSchedule.Arn
+
+  # ------------------------------------------- Panorama traffic (flow log)
+  FlowLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /its/firewall-monitoring/mgmt-subnet-flowlogs
+      RetentionInDays: !Ref LogRetentionDays
+
+  FlowLogRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: its-firewall-monitor-flowlog-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: vpc-flow-logs.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: write-flow-logs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents, logs:DescribeLogStreams]
+                Resource: !Sub ${FlowLogGroup.Arn}:*
+
+  MgmtSubnetFlowLog:
+    Type: AWS::EC2::FlowLog
+    Properties:
+      ResourceType: Subnet
+      ResourceId: !Ref FirewallMgmtSubnetId
+      TrafficType: ALL
+      LogDestinationType: cloud-watch-logs
+      LogGroupName: !Ref FlowLogGroup
+      DeliverLogsPermissionArn: !GetAtt FlowLogRole.Arn
+      MaxAggregationInterval: 60
+      LogFormat: "${version} ${account-id} ${interface-id} ${srcaddr} ${dstaddr} ${srcport} ${dstport} ${protocol} ${packets} ${bytes} ${start} ${end} ${action} ${log-status}"
+
+  Firewall1PanoramaFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref FlowLogGroup
+      FilterPattern: !Sub "[version, account, eni, src=${Firewall1MgmtIp}, dst=${PanoramaIp}, srcport, dstport, protocol, packets, bytes, start, end, action, status]"
+      MetricTransformations:
+        - MetricNamespace: ARL/FirewallMonitor
+          MetricName: Fw1PanoramaFlowRecords
+          MetricValue: "1"
+
+  Firewall2PanoramaFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref FlowLogGroup
+      FilterPattern: !Sub "[version, account, eni, src=${Firewall2MgmtIp}, dst=${PanoramaIp}, srcport, dstport, protocol, packets, bytes, start, end, action, status]"
+      MetricTransformations:
+        - MetricNamespace: ARL/FirewallMonitor
+          MetricName: Fw2PanoramaFlowRecords
+          MetricValue: "1"
+
+  # ------------------------------------------------------------------ Alarms
+  Fw1InstanceStatusAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: its-fw1-instance-status-failed
+      AlarmDescription: "FW1 (its-aws-usgw1-fw1) is failing the EC2 instance status check for 5 minutes. The guest OS is hung. If FW1 is the active firewall, traffic through the Security VPC is down. Restart FW1 from EC2 (stop, then start). If FW2 is healthy it should take over."
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed_Instance
+      Dimensions: [{ Name: InstanceId, Value: !Ref Firewall1InstanceId }]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 5
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+  Fw2InstanceStatusAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: its-fw2-instance-status-failed
+      AlarmDescription: "FW2 (its-aws-usgw1-fw2) is failing the EC2 instance status check for 5 minutes. The guest OS is hung. If FW2 is the standby, there is no failover protection until it is restarted. Restart FW2 from EC2 (stop, then start)."
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed_Instance
+      Dimensions: [{ Name: InstanceId, Value: !Ref Firewall2InstanceId }]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 5
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+  Fw1ManagementAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: its-fw1-management-unreachable
+      AlarmDescription: "FW1 management interface (TCP 443) has not answered a probe from the its-mgmt-vpc for 5 minutes, or the probe itself stopped reporting. EC2 status checks can still look healthy in this state. Check Panorama for Disconnected, then check the probe logs in /aws/lambda/its-firewall-monitor-probe to rule out a monitor failure. Restart FW1 from EC2 if confirmed."
+      Namespace: ARL/FirewallMonitor
+      MetricName: ManagementReachable
+      Dimensions: [{ Name: Firewall, Value: fw1 }]
+      Statistic: Minimum
+      Period: 60
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 5
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+  Fw2ManagementAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: its-fw2-management-unreachable
+      AlarmDescription: "FW2 management interface (TCP 443) has not answered a probe from the its-mgmt-vpc for 5 minutes, or the probe itself stopped reporting. This is how FW2 died unnoticed on 2026-11-26 (EC2 showed healthy). Check Panorama for Disconnected, then check the probe logs in /aws/lambda/its-firewall-monitor-probe to rule out a monitor failure. Restart FW2 from EC2 if confirmed."
+      Namespace: ARL/FirewallMonitor
+      MetricName: ManagementReachable
+      Dimensions: [{ Name: Firewall, Value: fw2 }]
+      Statistic: Minimum
+      Period: 60
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 5
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+  Fw1PanoramaAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: its-fw1-panorama-contact-lost
+      AlarmDescription: "No traffic between FW1 and Panorama (10.254.254.50) for 30 minutes. A healthy firewall talks to Panorama about every 15 minutes. Expect this alarm during a planned restart. Otherwise check Panorama Managed Devices for Disconnected and test the management interface."
+      Namespace: ARL/FirewallMonitor
+      MetricName: Fw1PanoramaFlowRecords
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 6
+      DatapointsToAlarm: 6
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+  Fw2PanoramaAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: its-fw2-panorama-contact-lost
+      AlarmDescription: "No traffic between FW2 and Panorama (10.254.254.50) for 30 minutes. A healthy firewall talks to Panorama about every 15 minutes. Expect this alarm during a planned restart. Otherwise check Panorama Managed Devices for Disconnected and test the management interface."
+      Namespace: ARL/FirewallMonitor
+      MetricName: Fw2PanoramaFlowRecords
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 6
+      DatapointsToAlarm: 6
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+  TgwTrafficAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: its-security-tgw-traffic-dropped
+      AlarmDescription: "Traffic returning from the Security VPC firewall to the Transit Gateway has dropped to almost zero for 15 minutes (normally several GB per hour). The active firewall is likely hung or not forwarding, which means an ARL-wide outage. Check which firewall holds all four ENIs, then restart the active firewall from EC2 (stop, then start). May also fire overnight if traffic is truly idle."
+      Namespace: AWS/TransitGateway
+      MetricName: BytesIn
+      Dimensions:
+        - { Name: TransitGateway, Value: !Ref TransitGatewayId }
+        - { Name: TransitGatewayAttachment, Value: !Ref SecurityAttachmentId }
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 3
+      Threshold: !Ref MinimumTgwBytesIn
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+Outputs:
+  AlertTopicArn:
+    Value: !Ref AlertTopic
+  NotifierFunctionName:
+    Value: !Ref NotifierFunction
+  ProbeFunctionName:
+    Value: !Ref ProbeFunction
