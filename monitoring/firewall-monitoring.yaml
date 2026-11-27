@@ -53,7 +53,7 @@ Parameters:
     Description: SES identity used as the From address. Must be verified in SES.
   AlertToAddresses:
     Type: String
-    Default: jbt8@arl.psu.edu
+    Default: jbt8@arl.psu.edu,jbt8@psu.edu
     Description: Comma-separated recipients. While SES is in sandbox, every recipient must be a verified SES identity.
   BackupAlertEmail:
     Type: String

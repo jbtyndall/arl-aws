@@ -367,8 +367,8 @@ Check that both firewalls pass EC2 status checks (see Step 1). Then confirm in P
 - Confirm FW2 can reach the EC2 API from its management interface and that it has the same IAM instance profile role (both currently use `ITS-PaloAlto-HA-InstanceRole`).
 - Pull FW1's system logs from before the hang.
 - Treat HA failover as unproven until tested.
-- Add alerting when a firewall shows Disconnected in Panorama or fails EC2 instance status checks (for example, a CloudWatch alarm on `StatusCheckFailed_Instance` for both instances).
-- Set a retention period on the `/aws/vpc/flowlogs-paloalto-troubleshooting` log group. It has none and holds about 12.7 GB. Only the Security VPC flow logs exist in CloudWatch. No PAN-OS system or HA logs are shipped there.
+- Done 2026-11-27: alerting was added in the `arl-monitoring-firewall` stack (see `docs/Firewall-Monitoring.md`). It alarms on EC2 status checks, an unreachable management port, lost Panorama contact, and a Security VPC TGW traffic drop. A real failure has not yet exercised it.
+- Done 2026-11-27: set 90 day retention on `/aws/vpc/flowlogs-paloalto-troubleshooting`, which had none and held about 12.7 GB. This matches the `/arl/vpcflow/*` groups. This group appears to be a temporary troubleshooting flow log on the Security VPC and may be redundant with `/arl/vpcflow/vpc-057fb606a1c0b1f2d`. No PAN-OS system or HA logs are shipped to CloudWatch.
 
 **Context:** CloudTrail shows ENI detaches, which indicate failovers, on 2026-11-15, 11-16, 11-18, 11-19, 11-20, and 11-26, along with manual reboots and stop/starts on 11-18, 11-19, and 11-23.
 

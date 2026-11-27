@@ -4,7 +4,9 @@ Last updated: 2026-11-27
 
 Detects a hung or disconnected Palo Alto VM-Series firewall in the ARL-ITS account (890884507059, us-gov-west-1) and emails an alert through SES. Built after the 2026-11-26 incident, where FW2 was dead for about 28 hours and FW1 hung with no peer, and nothing alerted. See `docs/architecture/networking/troubleshooting-palo-alto-vm-series-ha.md`.
 
-**Status:** Deployed 2026-11-27 as stack `arl-monitoring-firewall` (naming convention: `arl-monitoring-<topic>`). Probe reaches both firewalls, python3.12 runs in GovCloud, and SES delivered alert emails from the sandbox. Forced-alarm test and Panorama and TGW alarm tuning still to confirm.
+**Recipients:** `jbt8@arl.psu.edu` and `jbt8@psu.edu`, sent from `aws@arl.psu.edu`.
+
+**Status:** Deployed 2026-11-27 as stack `arl-monitoring-firewall` (naming convention: `arl-monitoring-<topic>`). Probe reaches both firewalls, python3.12 runs in GovCloud, and SES delivered alert emails from the sandbox. Forced-alarm test sent to both recipients. A real firewall failure has not yet exercised the alarms.
 
 ## What it checks
 
@@ -94,7 +96,9 @@ To add a backup email that receives the raw alarm without SES or Lambda, add `--
 
 ## Known limits and caveats
 
-- **SES sandbox.** arl-its is in the SES sandbox, so every recipient must be a verified identity. The domain identity is `FAILED`. Only `aws@arl.psu.edu` and `jbt8@arl.psu.edu` are usable. Adding recipients means verifying them in SES first. See `docs/Centralized-SES-Email-Sending.md`.
+- **SES sandbox.** arl-its is in the SES sandbox, so every recipient must be a verified identity. The domain identity is `FAILED`. Verified identities are `aws@arl.psu.edu` (sender), `jbt8@arl.psu.edu`, and `jbt8@psu.edu`. See `docs/Centralized-SES-Email-Sending.md`.
+- **Adding a recipient.** Verify the address in SES first, or SES rejects the whole message and nobody gets the alert. Run `aws sesv2 create-email-identity --profile arl-its-govcloud --region us-gov-west-1 --email-identity <address>`, have the owner click the link in the verification email (it expires in 24 hours), then redeploy with the full list: `--parameter-overrides AlertToAddresses=jbt8@arl.psu.edu,jbt8@psu.edu,<address>`.
+- **Redeploys keep old parameter values.** `aws cloudformation deploy` does not pick up changed template defaults for parameters already set on the stack. Pass `--parameter-overrides AlertToAddresses=...` explicitly whenever the recipient list changes.
 - **SES send permission is untested.** The notifier sends as `aws@arl.psu.edu` using its IAM role. Whether that works in the sandbox is what the forced-alarm test proves.
 - **No SCP change needed now.** The SES SCP (`ARL-Deny-SES-Send-Except-Approved`) is attached only to ARL-ITS-Sandbox. If it is later attached to arl-its or the root, the notifier role will be blocked. Its name (`its-firewall-monitor-notifier-role`) is deliberately not `ARL-SES-Sender-*`, because `ProtectRoles` in `ARL-Guardrails-Global` stops an SSO admin from attaching policies to `ARL-*` roles. At that point, either deploy the role from a StackSet using an approved name or add an exemption.
 - **Planned restarts trip the alarms.** Restarting a firewall will fire the management and Panorama alarms for that firewall, then send OK emails.
